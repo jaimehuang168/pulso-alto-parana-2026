@@ -1,0 +1,149 @@
+name: Repair account diagnostics
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/fix-account-diagnostics.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: account-diagnostics-repair
+  cancel-in-progress: false
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Apply narrowly scoped reviewed frontend correction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          path=Path('web/app.js')
+          data=path.read_bytes()
+          digest=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+          original='b792c249cfe446b6f307f4ee731025d86c7814da'
+          corrected='8523e29e148a4c99907e1e28122adc12860eba31'
+          if digest==corrected:
+            print('已套用相同修正；不重複更動。')
+            raise SystemExit(0)
+          if digest!=original:
+            raise SystemExit('web/app.js 已有其他變更；停止，不覆蓋未核對的程式。')
+          replacement=r'''// Account diagnostics A1. Never log credentials or automatically retry a write.
+          function safeAccountText(value){
+           return String(value||'').replace(/Bearer\s+[^\s"'<>]+/gi,'Bearer [oculto]')
+           .replace(/\bsb_(?:secret|publishable)_[A-Za-z0-9_-]+/g,'[clave oculta]')
+           .replace(/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,'[token oculto]')
+           .replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,500);
+          }
+          async function accountFunctionError(error){
+           const status=Number(error?.context?.status)||0;
+           let payload=null;
+           try{const response=error?.context;payload=await(response?.clone?response.clone():response)?.json();}catch{}
+           const raw=typeof payload?.error==='string'?payload.error:typeof payload?.message==='string'?payload.message:typeof payload?.error?.message==='string'?payload.error.message:'';
+           const detail=safeAccountText(raw);
+           const hints={401:'La función rechazó la sesión. Revise el mensaje y la invocación antes de cambiar ajustes.',403:'Compruebe el rol activo y el origen autorizado; no desactive RLS.',404:'Compruebe que provision-team esté desplegada en el mismo proyecto.',409:'Revise si el código ya existe en las cuentas o en Auth. No lo duplique.',429:'Límite temporal del servidor. Compruebe el estado de la cuenta antes de reintentar.'};
+           const fallback=status>=500?'Error del servidor. Revise la invocación de provision-team.':status?'Revise la respuesta de provision-team.':'No se obtuvo respuesta HTTP. Revise conexión, CORS y despliegue; no se confirma si hubo cambios.';
+           const hint=hints[status]||fallback;
+           return Object.assign(new Error(`[${status?'HTTP '+status:'CONEXIÓN'}] ${detail?detail+' ':''}${hint}`),{code:status?'ACCOUNT_HTTP_'+status:'ACCOUNT_CONNECTION',accountDiagnostic:true});
+          }
+          async function edge(body){
+           if(S.accountBusy)throw Object.assign(new Error('Hay una solicitud de cuentas en curso. Espere; no repita la operación.'),{code:'ACCOUNT_BUSY',accountDiagnostic:true});
+           S.accountBusy=true;
+           try{
+            const sb=await client();
+            let {data:sessionData,error:sessionError}=await sb.auth.getSession();
+            let session=sessionData?.session;
+            if(sessionError||!session)throw Object.assign(new Error('No hay una sesión válida. Salga y vuelva a ingresar con su cuenta de administración.'),{code:'ACCOUNT_SESSION',accountDiagnostic:true});
+            if(session.expires_at&&session.expires_at*1000<Date.now()+60000){
+             const refreshed=await sb.auth.refreshSession();session=refreshed.data?.session;
+             if(refreshed.error||!session)throw Object.assign(new Error('No se pudo renovar la sesión. Vuelva a ingresar; no se envió la solicitud de cuentas.'),{code:'ACCOUNT_SESSION',accountDiagnostic:true});
+            }
+            if(!session.access_token||session.user?.id!==S.profile?.id)throw Object.assign(new Error('La sesión no corresponde a esta cuenta. Vuelva a ingresar.'),{code:'ACCOUNT_SESSION',accountDiagnostic:true});
+            let response;
+            try{response=await sb.functions.invoke('provision-team',{body,headers:{Authorization:'Bearer '+session.access_token}});}
+            catch(error){throw await accountFunctionError(error);}
+            if(response.error)throw await accountFunctionError(response.error);
+            if(response.data?.error)throw Object.assign(new Error(safeAccountText(response.data.error)),{code:'ACCOUNT_RESPONSE',accountDiagnostic:true});
+            if(!response.data||typeof response.data!=='object')throw Object.assign(new Error('Respuesta de cuentas vacía o inválida. Revise si se creó la cuenta antes de reintentar.'),{code:'ACCOUNT_RESPONSE',accountDiagnostic:true});
+            return response.data;
+           }finally{S.accountBusy=false;}
+          }'''
+          source=data.decode('utf-8')
+          old="async function edge(body){const {data,error}=await(await client()).functions.invoke('provision-team',{body});if(error)throw new Error('No se pudo ejecutar la función de cuentas. Revise despliegue, sesión y APP_ORIGIN.');if(data?.error)throw new Error(data.error);return data;}"
+          if source.count(old)!=1:raise SystemExit('找不到唯一的待修正帳號函式。')
+          source=source.replace(old,replacement)
+          oldcatch="}}catch(e){fail(e);form.querySelectorAll('button[type=submit]').forEach(b=>b.disabled=false);}});"
+          newcatch="}}catch(e){if(form.id==='create-account-form'){let box=form.querySelector('.account-error-details');if(!box){box=document.createElement('div');box.className='callout error account-error-details';box.setAttribute('role','alert');box.style.whiteSpace='pre-line';form.append(box);}box.textContent='Diagnóstico de cuentas A1\\n'+safeAccountText(e.message)+'\\nNo repita el alta sin comprobar si la cuenta ya existe.';box.scrollIntoView({block:'nearest'});}fail(e);form.querySelectorAll('button[type=submit]').forEach(b=>b.disabled=false);}});"
+          if source.count(oldcatch)!=1:raise SystemExit('表單處理已變更；停止。')
+          source=source.replace(oldcatch,newcatch)
+          result=source.encode('utf-8')
+          if hashlib.sha1(b'blob '+str(len(result)).encode()+b'\0'+result).hexdigest()!=corrected:
+            raise SystemExit('修正結果與本機已測試版本不一致；停止。')
+          path.write_bytes(result)
+          print('只修改帳號請求及錯誤顯示；未修改 SQL、RLS、Edge Function 或正式資料。')
+          PY
+      - name: Generate account error regression tests
+        shell: bash
+        run: |
+          cat > tests/account-errors.test.cjs <<'JS'
+          'use strict';
+          const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const vm=require('node:vm');const path=require('node:path');
+          const app=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8');
+          const start=app.indexOf('function safeAccountText('),end=app.indexOf('function showCredentials(',start);
+          assert(start>=0&&end>start,'Account diagnostics functions are missing');
+          function setup(result,options={}){
+           const calls=[];let refreshes=0;
+           const session={access_token:'unit-test-session-token',user:{id:'qa-admin'},expires_at:Date.now()/1000+3600};
+           const sb={auth:{getSession:async()=>({data:{session:options.noSession?null:options.expired?{...session,expires_at:1}:options.wrongUser?{...session,user:{id:'other'}}:session},error:null}),refreshSession:async()=>{refreshes++;return{data:{session:options.refreshFails?null:{...session,access_token:'renewed-test-session'}},error:options.refreshFails?new Error('expired'):null};}},functions:{invoke:async(name,args)=>{calls.push({name,args});if(options.throwError)throw options.throwError;return typeof result==='function'?result():result;}}};
+           const S={profile:{id:'qa-admin'},accountBusy:false};const scope={S,client:async()=>sb,Date,Error,Number,String,Object};
+           vm.createContext(scope);vm.runInContext(app.slice(start,end),scope);
+           return{...scope,calls,refreshes:()=>refreshes};
+          }
+          function http(status,payload){return {error:{name:'FunctionsHttpError',context:new Response(JSON.stringify(payload),{status,headers:{'Content-Type':'application/json'}})},data:null};}
+          test('account: success forwards an explicit user token once',async()=>{const s=setup({data:{credential:{code:'VIEW-QA001'}},error:null});assert.equal((await s.edge({action:'create-account'})).credential.code,'VIEW-QA001');assert.equal(s.calls.length,1);assert.equal(s.calls[0].args.headers.Authorization,'Bearer unit-test-session-token');assert.equal(s.S.accountBusy,false);});
+          test('account: missing session makes no function request',async()=>{const s=setup(null,{noSession:true});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_SESSION');assert.equal(s.calls.length,0);assert.equal(s.S.accountBusy,false);});
+          test('account: different user session is not sent',async()=>{const s=setup(null,{wrongUser:true});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_SESSION');assert.equal(s.calls.length,0);});
+          test('account: expired session is refreshed before one write',async()=>{const s=setup({data:{ok:true},error:null},{expired:true});await s.edge({});assert.equal(s.refreshes(),1);assert.equal(s.calls.length,1);assert.equal(s.calls[0].args.headers.Authorization,'Bearer renewed-test-session');});
+          test('account: failed refresh does not send a write',async()=>{const s=setup(null,{expired:true,refreshFails:true});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_SESSION');assert.equal(s.calls.length,0);});
+          for(const [status,payload,expected] of [[401,{message:'Invalid JWT'},'Invalid JWT'],[403,{error:'Solo coordinación autorizada.'},'Solo coordinación'],[404,{message:'Function not found'},'Function not found'],[409,{error:'Este código ya existe.'},'Este código ya existe.'],[429,{message:'Too many requests'},'Too many requests'],[500,{error:'Falta configuración segura de servidor.'},'Falta configuración']]){
+           test('account: preserves safe HTTP '+status+' response without retry',async()=>{const s=setup(http(status,payload));await assert.rejects(s.edge({action:'create-account'}),e=>e.code==='ACCOUNT_HTTP_'+status&&e.message.includes(expected));assert.equal(s.calls.length,1);assert.equal(s.S.accountBusy,false);});
+          }
+          test('account: CORS or fetch failure is not mislabelled HTTP 401',async()=>{const s=setup({data:null,error:{name:'FunctionsFetchError'}});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_CONNECTION');assert.equal(s.calls.length,1);});
+          test('account: thrown network failure is shown without retry',async()=>{const s=setup(null,{throwError:new TypeError('Failed to fetch')});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_CONNECTION');assert.equal(s.calls.length,1);});
+          test('account: invalid response remains unconfirmed',async()=>{const s=setup({data:null,error:null});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_RESPONSE');});
+          test('account: unreadable HTTP body retains status',async()=>{const s=setup({data:null,error:{context:new Response('<html>upstream</html>',{status:502})}});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_HTTP_502'&&!e.message.includes('<html>'));});
+          test('account: sensitive token and key text is redacted',async()=>{const s=setup(http(500,{message:'sb_secret_privatevalue Bearer eyJabc.payload.signature'}));await assert.rejects(s.edge({}),e=>!e.message.includes('privatevalue')&&!e.message.includes('eyJabc'));});
+          test('account: error body with HTTP 200 is not treated as success',async()=>{const s=setup({data:{error:'Solicitud rechazada'},error:null});await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_RESPONSE');});
+          test('account: concurrent click sends only one request',async()=>{let done;const s=setup(()=>new Promise(resolve=>{done=resolve;}));const first=s.edge({});await new Promise(resolve=>setImmediate(resolve));await assert.rejects(s.edge({}),e=>e.code==='ACCOUNT_BUSY');done({data:{ok:true},error:null});await first;assert.equal(s.calls.length,1);});
+          test('account: persistent UI error uses textContent',()=>{assert(app.includes("box.textContent='Diagnóstico de cuentas A1"));assert(!app.includes('box.innerHTML='));});
+          JS
+      - name: Validate before committing
+        run: |
+          node --check web/app.js
+          node --check web/core.js
+          node --test tests/*.cjs
+          python tests/import_package_test.py
+      - name: Commit reviewed frontend and tests
+        shell: bash
+        run: |
+          git add -- web/app.js tests/account-errors.test.cjs
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m '修正帳號錯誤顯示與憑證傳送；68項單元測試通過'
+            git push origin HEAD:main
+          fi
+          echo '只修正前端診斷；正式帳號建立仍待實際登入驗證。未更動正式資料庫。' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish corrected frontend through existing workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
