@@ -1,0 +1,129 @@
+name: Pulso release verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/readiness-verify.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-isolated-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install test clients
+        run: python -m pip install --disable-pip-version-check psycopg2-binary==2.9.10 PyYAML==6.0.2 playwright==1.55.0
+      - name: Replay reviewed audit with corrected test fixture
+        env:
+          SB_URL: ${{ vars.SUPABASE_URL }}
+          PUBLIC_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          python - <<'PY'
+          import yaml,subprocess
+          from pathlib import Path
+          # Reuses the committed, reviewed audit cases. Only test-data string concatenation is corrected.
+          original=yaml.safe_load(Path('.github/workflows/readiness-audit.yml').read_text())
+          steps=original['jobs']['audit']['steps']
+          names=['Source unit tests','Database role and concurrency audit','Live read-only unauthenticated probes']
+          failures=[]
+          for name in names:
+            script=next(s['run'] for s in steps if s.get('name')==name)
+            if name=='Database role and concurrency audit':
+              script=script.replace("name='TEST '+id::text","name='TEST '||id::text")
+            result=subprocess.run(['bash','-e','-o','pipefail','-c',script])
+            if result.returncode:failures.append(name)
+          if failures:raise SystemExit('Audit execution failed: '+', '.join(failures))
+          PY
+      - name: Install browser for real origin and IndexedDB
+        if: always()
+        run: python -m playwright install --with-deps chromium
+      - name: Real browser storage lifecycle
+        if: always()
+        run: |
+          mkdir -p audit-results
+          node scripts/build-demo.mjs
+          python - <<'PY'
+          import json,threading,http.server,functools,tempfile
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+          results=[]
+          def check(name,ok):
+            results.append({'name':name,'pass':bool(ok)})
+            if not ok:raise AssertionError(name)
+          class Handler(http.server.SimpleHTTPRequestHandler):
+            def log_message(self,*a):pass
+          server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Handler,directory=str(Path.cwd())))
+          threading.Thread(target=server.serve_forever,daemon=True).start()
+          url=f'http://127.0.0.1:{server.server_port}/DEMO_ABRIR_EN_NAVEGADOR.html'
+          ctx=None
+          try:
+            with sync_playwright() as p:
+              profile=tempfile.mkdtemp(prefix='pulso-qa-')
+              def launch():return p.chromium.launch_persistent_context(profile,headless=True,viewport={'width':390,'height':844})
+              ctx=launch();page=ctx.new_page();page.goto(url);page.wait_for_selector('[data-test=district-card]')
+              def role(slot='1'):
+                page.locator('[data-action=demo-profile]').click()
+                page.locator('#demo-profile-form select[name=role]').select_option('interviewer')
+                page.locator('#demo-profile-form select[name=city]').select_option('cde')
+                page.locator('#demo-profile-form select[name=slot]').select_option(slot)
+                page.locator('#demo-profile-form [type=submit]').click();page.wait_for_timeout(100)
+              check('actual persistent origin active','no conserva' not in page.locator('.demo-strip').inner_text())
+              role();page.locator('[data-action=simulate-offline]').click()
+              page.locator('[name=voted]').check();page.locator('[data-outcome=refused]').click();page.locator('#save-response').click();page.wait_for_timeout(200)
+              check('outbox persisted before acknowledgment',page.locator('#my-pending').inner_text()=='1' and page.locator('#my-count').inner_text()=='0')
+              ctx.close();ctx=launch();page=ctx.new_page();page.goto(url);page.wait_for_selector('[data-test=district-card]');role()
+              check('outbox survives browser process restart',page.locator('#my-pending').inner_text()=='1')
+              role('2');check('other user outbox isolated',page.locator('#my-pending').inner_text()=='0')
+              role();page.locator('[data-action=open-queue]').click();page.locator('[data-action=sync]').click();page.wait_for_timeout(300)
+              sizes=page.evaluate("async()=>{const s=new PulsoCore.Store();return [(await s.all('outbox')).length,(await s.all('demo_events')).length]}")
+              check('resumed demo sync acknowledges once',sizes==[0,1])
+              page.locator('[data-action=sync]').click();page.wait_for_timeout(100)
+              check('retry no duplicate',page.evaluate("async()=>{const s=new PulsoCore.Store();return (await s.all('demo_events')).length}")==1)
+              role();check('no voter identifiers',page.locator('#capture-form input').evaluate_all('(xs)=>xs.map(x=>x.name)')==['voted','consent'])
+              page.locator('[name=voted]').check();page.locator('[name=consent]').check();page.locator('[data-outcome=blank]').click()
+              page.evaluate("()=>{let f=document.querySelector('#capture-form');f.requestSubmit();f.requestSubmit()}");page.wait_for_timeout(500)
+              check('double submit blocked',page.locator('#my-count').inner_text()=='2')
+              ctx.close();ctx=None
+          except Exception as e:results.append({'name':'browser lifecycle execution','pass':False,'error':str(e)[:600]})
+          finally:
+            server.shutdown()
+            Path('audit-results/browser.json').write_text(json.dumps({'tests':results,'scope':'real Chromium/local HTTP/IndexedDB lifecycle; demo synchronization, not live Supabase or phones'},ensure_ascii=False,indent=2))
+            print('AUDIT_BROWSER_SUMMARY '+json.dumps(results,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-release-evidence
+          path: audit-results/
+          retention-days: 14
+      - name: Explicit readiness verdict
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          failed=[]
+          for n in ['database','live','browser']:
+            p=Path('audit-results')/(n+'.json')
+            if not p.exists():failed.append(n+': not executed');continue
+            report=json.loads(p.read_text());tests=report['tests'];bad=[t['name'] for t in tests if not t['pass']];failed+=bad
+            print(n, 'PASS',len(tests)-len(bad),'/',len(tests),json.dumps(bad))
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+            f.write('## 正式收件上線判定\n'+json.dumps(failed,ensure_ascii=False)+'\n')
+            f.write('正式庫沒有測試寫入；60工作執行緒是隔離資料庫測試，不是60支手機或正式Supabase效能保證。\n')
+          if failed:raise SystemExit(1)
+          PY
