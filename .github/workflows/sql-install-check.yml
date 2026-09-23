@@ -2,9 +2,7 @@ name: Validate SQL installation
 on:
   push:
     branches: [main]
-    paths:
-      - 'supabase/**/*.sql'
-      - '.github/workflows/sql-install-check.yml'
+    paths: ['supabase/**/*.sql', '.github/workflows/sql-install-check.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,19 +21,17 @@ jobs:
           POSTGRES_PASSWORD: pulso-ci-only
         options: >-
           --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
+          --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
           package-manager-cache: false
-      - name: Apply narrowly scoped fix to known original SQL only
+      - name: Patch reviewed SQL only
         shell: bash
         run: |
-          python - <<'PYSQL'
+          python - <<'PY'
           import hashlib, os
           from pathlib import Path
           expected = {
@@ -43,102 +39,91 @@ jobs:
             'supabase/migrations/001_schema.sql': ('f958a350d57220d543eb769f894fcc1956d0b46b', 1),
             'supabase/migrations/002_municipales_2026.sql': ('dd897b34145031d356c4b3a49d58206bff303cfe', 2),
           }
-          replacements = {
+          edits = {
             "date_trunc('hour',received_at) hour,": "date_trunc('hour',received_at) AS hour,",
             "date_trunc('hour',captured_at) hour,": "date_trunc('hour',captured_at) AS hour,",
           }
           planned = []
-          for name, (expected_sha, expected_count) in expected.items():
-            path = Path(name)
-            data = path.read_bytes()
-            text = data.decode('utf-8')
-            count = sum(text.count(old) for old in replacements)
-            if not count:
-              print(name, 'has no known bare-hour alias')
+          for name, (sha, count) in expected.items():
+            path = Path(name); data = path.read_bytes(); text = data.decode('utf-8')
+            found = sum(text.count(old) for old in edits)
+            if not found:
               continue
             actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
-            if actual != expected_sha or count != expected_count:
-              raise SystemExit('Source differs from the reviewed original; refusing automatic edits: ' + name)
+            if actual != sha or found != count:
+              raise SystemExit('Unreviewed changes; no automatic overwrite: ' + name)
             if name == 'supabase/00_INSTALL_NEW_PROJECT.sql':
-              (Path(os.environ['RUNNER_TEMP'])/'original-install.sql').write_bytes(data)
-            for old, new in replacements.items():
-              text = text.replace(old, new)
+              (Path(os.environ['RUNNER_TEMP'])/'original.sql').write_bytes(data)
+            for old, new in edits.items(): text = text.replace(old, new)
             planned.append((path, text.encode('utf-8')))
-          for path, data in planned:
-            path.write_bytes(data)
-            print('Added explicit AS only:', path)
+          for path, data in planned: path.write_bytes(data)
           combined = Path('supabase/00_INSTALL_NEW_PROJECT.sql').read_bytes()
           parts = Path('supabase/migrations/001_schema.sql').read_bytes() + b'\n' + Path('supabase/migrations/002_municipales_2026.sql').read_bytes()
-          if combined != parts:
-            raise SystemExit('Integrated installer and migrations do not match.')
-          PYSQL
-      - name: Execute installers and dashboard queries on isolated PostgreSQL 17
+          if combined != parts: raise SystemExit('Combined installer differs from migrations.')
+          PY
+      - name: Real PostgreSQL install and hourly dashboard regression
         env:
           PG_CONTAINER: ${{ job.services.postgres.id }}
         shell: bash
         run: |
           set -euo pipefail
           pg() { docker exec -i "$PG_CONTAINER" psql -X -U postgres -v ON_ERROR_STOP=1 "$@"; }
+          # Disposable CI container only. No live Supabase credentials or endpoints.
           pg -d postgres <<'SQL'
           create role anon nologin;
           create role authenticated nologin;
           create role service_role nologin bypassrls;
           SQL
-          # Only a disposable CI container is contacted. Never the live Supabase project.
-          cat > "$RUNNER_TEMP/auth-fixture.sql" <<'SQL'
+          cat > "$RUNNER_TEMP/auth.sql" <<'SQL'
           create schema auth;
           create table auth.users(id uuid primary key, email text);
           create function auth.uid() returns uuid language sql stable as
-          $$select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid$$;
+          $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
           grant usage on schema auth to anon, authenticated, service_role;
           create publication supabase_realtime;
           SQL
-          for db in pulso_original pulso_full pulso_migrations; do
+          for db in pulso_original pulso_full pulso_parts; do
             pg -d postgres -c "create database $db;"
-            pg -d "$db" < "$RUNNER_TEMP/auth-fixture.sql"
+            pg -d "$db" < "$RUNNER_TEMP/auth.sql"
           done
-          if [ -f "$RUNNER_TEMP/original-install.sql" ]; then
-            if pg -d pulso_original < "$RUNNER_TEMP/original-install.sql" > "$RUNNER_TEMP/original-error.log" 2>&1; then
-              echo 'Expected the original SQL to fail.'; exit 1
+          if [ -f "$RUNNER_TEMP/original.sql" ]; then
+            if pg -d pulso_original < "$RUNNER_TEMP/original.sql" > "$RUNNER_TEMP/original.log" 2>&1; then
+              echo 'Original SQL should fail'; exit 1
             fi
-            grep -F 'syntax error at or near "hour"' "$RUNNER_TEMP/original-error.log"
-            echo 'Confirmed original 42601 failure before testing corrected SQL.'
+            grep -F 'syntax error at or near "hour"' "$RUNNER_TEMP/original.log"
           fi
           pg -d pulso_full < supabase/00_INSTALL_NEW_PROJECT.sql
-          pg -d pulso_migrations < supabase/migrations/001_schema.sql
-          # Exercise the v1 dashboard, before it is replaced by the v2 wrapper.
-          pg -d pulso_migrations <<'SQL'
+          pg -d pulso_parts < supabase/migrations/001_schema.sql
+          pg -d pulso_parts <<'SQL'
           begin;
           insert into auth.users values('00000000-0000-4000-8000-000000000001','admin@example.invalid');
           insert into public.profiles(id,code,role,active) values('00000000-0000-4000-8000-000000000001','COORD-01','admin',true);
           select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
           do $$begin
-            if jsonb_array_length(public.get_dashboard()->'districts') <> 4 then
-              raise exception 'v1 dashboard did not return four cities';
+            if jsonb_array_length(public.get_dashboard()->'districts') is distinct from 4 then
+              raise exception 'v1 dashboard failed';
             end if;
           end$$;
           rollback;
           SQL
-          pg -d pulso_migrations < supabase/migrations/002_municipales_2026.sql
-          cat > "$RUNNER_TEMP/assert-v2.sql" <<'SQL'
+          pg -d pulso_parts < supabase/migrations/002_municipales_2026.sql
+          cat > "$RUNNER_TEMP/check.sql" <<'SQL'
           begin;
           do $$begin
-            if (select count(*) from public.districts) <> 4
-               or (select count(*) from public.candidates where active) <> 12
-               or (select count(*) from public.responses) <> 0 then
-              raise exception 'Unexpected fresh-install counts';
+            if (select count(*) from public.districts) <> 4 or
+               (select count(*) from public.candidates where active) <> 12 or
+               (select count(*) from public.responses) <> 0 then
+              raise exception 'Initial counts failed';
             end if;
-            if not exists(select 1 from public.settings where id=1 and state='setup' and fieldwork_date='2026-10-04' and viewer_enabled=false) then
-              raise exception 'Unexpected initial settings';
+            if not exists(select 1 from public.settings where id=1 and state='setup' and fieldwork_date='2026-10-04' and not viewer_enabled) then
+              raise exception 'Initial settings failed';
             end if;
             if (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
-                where n.nspname='public' and c.relrowsecurity and c.relname in
-                ('districts','settings','candidates','stations','profiles','responses','audit_log','district_signals')) <> 8 then
-              raise exception 'RLS was not enabled on all eight tables';
+              where n.nspname='public' and c.relrowsecurity and c.relname in
+              ('districts','settings','candidates','stations','profiles','responses','audit_log','district_signals')) <> 8 then
+              raise exception 'RLS activation failed';
             end if;
-            if to_regprocedure('public.submit_response_v2(jsonb)') is null then
-              raise exception 'v2 submit function missing';
-            end if;
+            if to_regprocedure('public.submit_response_v2(jsonb)') is null then raise exception 'v2 missing'; end if;
           end$$;
           insert into auth.users values
             ('00000000-0000-4000-8000-000000000001','admin@example.invalid'),
@@ -147,39 +132,36 @@ jobs:
           insert into public.profiles(id,code,role,district_id,station_id,slot,active)
             select '00000000-0000-4000-8000-000000000002','CDE-01','interviewer','cde',id,1,true
             from public.stations where district_id='cde' order by id limit 1;
-          #PLACEHOLDER
+          -- Anonymous refusal only; no simulated preference for a real candidate.
           insert into public.responses(id,agent_id,district_id,station_id,outcome,consent,already_voted,started_at,captured_at,received_at)
             select '00000000-0000-4000-8000-000000000003',p.id,'cde',p.station_id,'refused',false,true,
-                   '2026-10-04T10:10:00Z','2026-10-04T10:11:00Z','2026-10-04T11:12:00Z'
+              '2026-10-04T10:10:00Z','2026-10-04T10:11:00Z','2026-10-04T11:12:00Z'
             from public.profiles p where code='CDE-01';
           select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
-          do $$declare report jsonb; city jsonb; begin
-            report := public.get_dashboard_v2();
-            if jsonb_array_length(report->'districts') <> 4 then raise exception 'v2 city count failed'; end if;
-            select value into city from jsonb_array_elements(report->'districts') where value->>'id'='cde';
-            if (city->>'total')::int <> 1 or (city->>'refused')::int <> 1 or (city->>'valid')::int <> 0 then
-              raise exception 'Refusal denominator failed';
+          do $$declare r jsonb; c jsonb; begin
+            r:=public.get_dashboard_v2();
+            if jsonb_array_length(r->'districts') is distinct from 4 then raise exception 'v2 dashboard failed'; end if;
+            select value into c from jsonb_array_elements(r->'districts') where value->>'id'='cde';
+            if (c->>'total')::int is distinct from 1 or (c->>'refused')::int is distinct from 1 or (c->>'valid')::int is distinct from 0 then
+              raise exception 'Denominators failed';
             end if;
-            if (city->'hours'->0->>'hour')::timestamptz <> '2026-10-04T11:00:00Z'::timestamptz
-               or (city->'capture_hours'->0->>'hour')::timestamptz <> '2026-10-04T10:00:00Z'::timestamptz then
-              raise exception 'Separate receipt/capture hours failed';
+            if (c->'hours'->0->>'hour')::timestamptz is distinct from '2026-10-04T11:00:00Z'::timestamptz or
+               (c->'capture_hours'->0->>'hour')::timestamptz is distinct from '2026-10-04T10:00:00Z'::timestamptz then
+              raise exception 'Separate hour timestamps failed';
             end if;
-            if (city->'hours'->0->>'count')::int <> 1 or (city->'capture_hours'->0->>'count')::int <> 1 then
-              raise exception 'Hourly counts failed';
+            if (c->'hours'->0->>'count')::int is distinct from 1 or (c->'capture_hours'->0->>'count')::int is distinct from 1 then
+              raise exception 'Hour counts failed';
             end if;
-            if jsonb_array_length(public.get_dashboard()->'districts') <> 4 then raise exception 'Legacy wrapper failed'; end if;
-            if jsonb_array_length(public.bootstrap()->'districts') <> 4 then raise exception 'Bootstrap failed'; end if;
+            if jsonb_array_length(public.get_dashboard()->'districts') is distinct from 4 then raise exception 'Wrapper failed'; end if;
+            if jsonb_array_length(public.bootstrap()->'districts') is distinct from 4 then raise exception 'Bootstrap failed'; end if;
           end$$;
           rollback;
           SQL
-          for db in pulso_full pulso_migrations; do
-            pg -d "$db" < "$RUNNER_TEMP/assert-v2.sql"
-          done
+          for db in pulso_full pulso_parts; do pg -d "$db" < "$RUNNER_TEMP/check.sql"; done
           pg -d postgres -c 'select version();'
           sha256sum supabase/00_INSTALL_NEW_PROJECT.sql supabase/migrations/*.sql
-          echo '## PostgreSQL 17 實際執行驗證通過' >> "$GITHUB_STEP_SUMMARY"
-          echo '完整安裝、分段安裝、v1/v2 面板、時段統計及八表 RLS 啟用檢查通過。僅使用一次性 CI 資料庫，未連線或更動正式 Supabase。這不是完整權限與實機驗收。' >> "$GITHUB_STEP_SUMMARY"
-      - name: Run existing JavaScript and import tests
+          echo '完整／分段安裝、v1/v2 面板、兩種時段統計、八表 RLS 啟用已在一次性 PostgreSQL 17 實測。未連線正式 Supabase；不代表完整權限或實機驗收。' >> "$GITHUB_STEP_SUMMARY"
+      - name: Existing source tests
         run: |
           node --check web/app.js
           node --check web/core.js
@@ -190,12 +172,9 @@ jobs:
         shell: bash
         run: |
           git add -- supabase/00_INSTALL_NEW_PROJECT.sql supabase/migrations/001_schema.sql supabase/migrations/002_municipales_2026.sql
-          if git diff --cached --quiet; then
-            echo 'No automatic SQL edits needed.'
-            exit 0
-          fi
+          if git diff --cached --quiet; then exit 0; fi
           git diff --cached --stat
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m '修正 PostgreSQL hour 欄位別名缺少 AS；完整與分段安裝已實測'
+          git commit -m '修正 PostgreSQL hour 別名缺少 AS；完整與分段安裝已實測'
           git push origin HEAD:main
