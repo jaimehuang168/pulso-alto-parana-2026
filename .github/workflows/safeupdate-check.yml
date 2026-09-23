@@ -1,0 +1,107 @@
+name: Verify safe UPDATE compatibility
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/safeupdate-check.yml'
+      - 'tests/safeupdate_regression.py'
+      - 'supabase/migrations/003_safeupdate_compatibility.sql'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: safeupdate-regression
+  cancel-in-progress: false
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: pulso-safe-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Fetch pinned upstream safety extension
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: eradman/pg-safeupdate
+          ref: 37dbc9c4acf5e2504adf2b218e9c6b41751022f3
+          path: _safeupdate_src
+          persist-credentials: false
+      - name: Build actual safeupdate inside disposable Postgres only
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker cp _safeupdate_src/safeupdate.c "$PG_CONTAINER:/tmp/safeupdate.c"
+          docker exec -u root "$PG_CONTAINER" sh -ec 'apk add --no-cache build-base; cc -O2 -fPIC -shared -I"$(pg_config --includedir-server)" -I"$(pg_config --includedir)" /tmp/safeupdate.c -o "$(pg_config --pkglibdir)/safeupdate.so"'
+          python -m pip install --disable-pip-version-check psycopg2-binary==2.9.10
+      - name: Apply only reviewed source replacements
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          expected = {
+            'supabase/migrations/001_schema.sql': ('6d18c87dfcbc31fdb1efb6bad1ba003de522aaec', 3),
+            'supabase/migrations/002_municipales_2026.sql': ('9a65622062ff6c6841730933733d39952b40ed7e', 2),
+          }
+          old = 'update public.district_signals set version=version+1,changed_at=clock_timestamp();'
+          new = 'update public.district_signals set version=version+1,changed_at=clock_timestamp() where district_id in (select id from public.districts);'
+          seed_old = "update public.settings set title='Municipales 2026 · Alto Paraná',contest='Intendencia municipal',fieldwork_date='2026-10-04',catalog_confirmed=false;"
+          seed_new = seed_old[:-1] + ' where id=1;'
+          paths = [Path(p) for p in expected]
+          combined = Path('supabase/00_INSTALL_NEW_PROJECT.sql')
+          if combined.read_bytes() != paths[0].read_bytes()+b'\n'+paths[1].read_bytes():
+            raise SystemExit('Installer differs from reviewed migrations; no replacement.')
+          planned = []
+          for name,(sha,count) in expected.items():
+            path=Path(name);data=path.read_bytes();text=data.decode()
+            found=text.count(old)
+            if found:
+              blob=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+              if blob!=sha or found!=count:raise SystemExit('Unreviewed source: '+name)
+              text=text.replace(old,new)
+              if name.endswith('002_municipales_2026.sql'):
+                assert text.count('delete from public.candidates;')==1 and text.count(seed_old)==1
+                text=text.replace('delete from public.candidates;','delete from public.candidates where district_id in (select id from public.districts);').replace(seed_old,seed_new)
+            elif text.count(new)!=count:
+              raise SystemExit('Missing expected scoped update: '+name)
+            planned.append((path,text.encode()))
+          for path,data in planned:path.write_bytes(data)
+          combined.write_bytes(paths[0].read_bytes()+b'\n'+paths[1].read_bytes())
+          PY
+      - name: Reproduce then verify live Postgres safety behavior
+        run: python tests/safeupdate_regression.py
+      - name: Existing source regressions
+        run: |
+          node --check web/app.js
+          node --check web/core.js
+          node --test tests/*.cjs
+          python tests/import_package_test.py
+      - name: Save tested migration and evidence
+        run: |
+          cp supabase/migrations/003_safeupdate_compatibility.sql audit-results/Pulso_FIX_UPDATE_WHERE.sql
+          sha256sum supabase/00_INSTALL_NEW_PROJECT.sql supabase/migrations/*.sql > audit-results/sha256.txt
+          echo '真實 safeupdate 啟用時，已重現舊版錯誤並驗證修正。只使用隔離 PostgreSQL；沒有連線正式 Supabase。正式庫仍須執行 003 修正並從 App 驗收停用。' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pulso-safeupdate-evidence
+          path: audit-results/
+          retention-days: 14
+      - name: Commit only source fixes that passed the regression
+        run: |
+          git add -- supabase/00_INSTALL_NEW_PROJECT.sql supabase/migrations/001_schema.sql supabase/migrations/002_municipales_2026.sql
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m '補齊通知與初始化的 WHERE 範圍；真實 safeupdate 回歸測試通過'
+          git push origin HEAD:main
