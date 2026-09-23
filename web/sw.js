@@ -1,5 +1,5 @@
 /* Static shell only. Never cache Auth, API responses or staff GPS in CacheStorage. */
-const CACHE='pulso-shell-v2.0.0';
+const CACHE='pulso-shell-v2.0.1-login-L2';
 const SHELL=['./','./index.html','./styles.css','./core.js','./app.js','./config.js','./supabase-vendor.js','./icon.svg','./icon-192.png','./icon-512.png','./manifest.webmanifest'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL))));
 // A waiting update activates after the user closes existing tabs; never force-reload a survey.
