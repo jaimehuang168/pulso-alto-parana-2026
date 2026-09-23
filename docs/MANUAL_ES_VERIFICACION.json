@@ -1,0 +1,59 @@
+{
+  "documentation": "Manual ES 1.0; application v2; documentation and guide-link additions only",
+  "date": "2026-09-22",
+  "full_manual_pdf_pages": 24,
+  "quick_guide_pdf_pages": 2,
+  "visual_review": "All PDF pages inspected; HTML mobile layouts reviewed.",
+  "local_core_tests": 43,
+  "local_core_tests_passed": 43,
+  "practice_DOM_checks_passed": 32,
+  "manual_html_checks": [
+    {
+      "file": "Pulso_Manual_Completo_ES.html",
+      "test": "no viewport overflow at 320px",
+      "pass": true
+    },
+    {
+      "file": "Pulso_Manual_Completo_ES.html",
+      "test": "no viewport overflow at 390px",
+      "pass": true
+    },
+    {
+      "file": "Pulso_Manual_Completo_ES.html",
+      "test": "no viewport overflow at 1440px",
+      "pass": true
+    },
+    {
+      "file": "Pulso_Manual_Completo_ES.html",
+      "test": "chapters, role navigation, copy/progress where present, no JS errors",
+      "pass": true
+    },
+    {
+      "file": "Pulso_Guia_Rapida_Encuestadores_ES.html",
+      "test": "no viewport overflow at 320px",
+      "pass": true
+    },
+    {
+      "file": "Pulso_Guia_Rapida_Encuestadores_ES.html",
+      "test": "no viewport overflow at 390px",
+      "pass": true
+    },
+    {
+      "file": "Pulso_Guia_Rapida_Encuestadores_ES.html",
+      "test": "no viewport overflow at 1440px",
+      "pass": true
+    },
+    {
+      "file": "Pulso_Guia_Rapida_Encuestadores_ES.html",
+      "test": "chapters, role navigation, copy/progress where present, no JS errors",
+      "pass": true
+    }
+  ],
+  "not_performed": [
+    "GitHub repository creation/push/Pages deployment",
+    "Supabase deployment or real account creation",
+    "Live PostgreSQL/RLS security verification",
+    "Real Android/iPhone offline persistence and GPS",
+    "60 account cloud load test"
+  ]
+}

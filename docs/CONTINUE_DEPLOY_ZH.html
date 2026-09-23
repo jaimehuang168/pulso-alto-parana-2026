@@ -1,0 +1,47 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pulso｜繁體中文部署接續指南</title><style>
+:root{font-family:system-ui,"Microsoft JhengHei",sans-serif;font-size:19px;color:#153742;background:#f0f5f6}*{box-sizing:border-box}body{margin:0}header{background:#143a45;color:white;padding:40px max(22px,calc((100vw - 1000px)/2))}header p{color:#c9e0e4}main{max-width:1000px;margin:24px auto;padding:32px;background:white;border-radius:16px}h1{font-size:32px;line-height:1.4}h2{font-size:25px;padding-top:24px;border-top:1px solid #d9e6e9;margin-top:32px}p,li{line-height:1.9}body{overflow-wrap:anywhere}a{color:#006e70;overflow-wrap:anywhere}code{font-family:Consolas,monospace;font-size:.88em;overflow-wrap:anywhere}pre{background:#edf4f5;padding:20px;overflow:auto;line-height:1.7;border-radius:8px}.note{border-left:5px solid #d19322;background:#fff5df;padding:16px 20px;line-height:1.9}.good{border-left:5px solid #00827c;background:#eaf8f4;padding:16px 20px;line-height:1.9}.step{margin:24px 0}button{font:inherit;padding:14px 24px;min-height:50px;border:0;border-radius:8px;background:#0b7773;color:white;cursor:pointer}.check{display:flex;gap:12px;padding:14px 0;line-height:1.7}.check input{width:24px;height:24px;flex-shrink:0}small{color:#526b74}table{width:100%;border-collapse:collapse;font-size:17px}td,th{padding:13px;text-align:left;border:1px solid #d9e6e9;overflow-wrap:anywhere}@media(max-width:700px){main{padding:20px;margin:12px}h1{font-size:28px}table{font-size:15px}td,th{padding:9px}}@media print{body,main{background:white;margin:0}header{background:white;color:black;padding:0}button{display:none}h2{break-after:avoid}}
+</style></head><body><header><small style="color:#d5f98c">PULSO · DEPLOYMENT CONTINUATION</small><h1>使用既有 GitHub 專案，接續發布</h1><p>程式與部署說明：繁體中文｜App 與調查員手冊：西班牙文</p></header><main>
+<div class="note"><strong>不要重建 repository。</strong><br>目標是 <code>jaimehuang168/pulso-alto-parana-2026</code>。這份指南改用單一 ZIP 匯入。程式匯入、網站發布與正式多人驗收是三個不同檢查點。下列勾選進度只保存在閱讀裝置，不會更新 GitHub 或 Supabase。</div>
+<h2>第 1 步：上傳完整 ZIP，不必解壓縮</h2>
+<p>下載 <strong>Pulso_v2_Deploy_ZH_ES.zip</strong>，保留原檔名與內容。不要重新壓縮，不要上傳舊版 ZIP，也不要將它改成 .html。</p>
+<p>開啟 <a href="https://github.com/jaimehuang168/pulso-alto-parana-2026" target="_blank" rel="noopener">GitHub 專案首頁</a>，依序按 <strong>Add file → Upload files</strong>。把 ZIP 拖入畫面，填寫提交說明「匯入 Pulso 完整程式」，選擇提交到 <strong>main</strong>，按 <strong>Commit changes</strong>。若帳號規則要求 Pull Request，請依規則合併到 main，不要停用保護。</p>
+<label class="check"><input type="checkbox" data-check="zip">我已在 repository 根目錄看到 Pulso_v2_Deploy_ZH_ES.zip。</label>
+<h2>第 2 步：確認自動匯入結果</h2>
+<p>開啟 <a href="https://github.com/jaimehuang168/pulso-alto-parana-2026/actions" target="_blank" rel="noopener">Actions</a>，點 <strong>Import Pulso package</strong>。它會先檢查 ZIP 的 SHA-256、必要檔案與路徑，再匯入完整原始碼、執行測試並正常提交，不使用 force push。</p>
+<p>成功後回到 Code，應看到 <code>web</code>、<code>supabase</code>、<code>scripts</code>、<code>tests</code> 與 <code>docs</code>。若顯示雜湊不符、缺少檔案或既有檔案不同，請保留錯誤，不要刪除 repository 或改掉檢查規則。</p>
+<p>若匯入程序顯示 GitHub Actions 沒有寫入權限，先由 repository 管理者核對 <strong>Settings → Actions → General → Workflow permissions</strong>；只針對本專案確認允許此匯入工作流程寫入原始碼，遵守組織限制。不要開放其他無關服務或把 token 寫入程式。</p>
+<label class="check"><input type="checkbox" data-check="import">Import Pulso package 成功，且 Code 中已出現 web/app.js。</label>
+<h2>第 3 步：完成 Supabase 後端</h2>
+<p>已有專用 Supabase 專案時沿用該專案，不要因為重新看指南而再建一次。尚未建立時，先建立獨立演練專案；正式資料庫與演練資料分開。以下安裝 SQL 只適用於全新專用資料庫。</p>
+<table><thead><tr><th>順序</th><th>操作</th><th>完成判準</th></tr></thead><tbody>
+<tr><td>3A</td><a href="https://supabase.com/dashboard" target="_blank" rel="noopener">Supabase Dashboard</a> → 專案 → SQL Editor，執行 <code>supabase/00_INSTALL_NEW_PROJECT.sql</code>。</td><td>資料表與規則建立成功，正式回答數為零。整合 SQL 已含 migrations，不重複執行。</td></tr>
+<tr><td>3B</td>Authentication → Users 建立自己的管理者帳號。停用公眾自行註冊及匿名登入。</td><td>管理者帳號已確認，可使用真實電子郵件與密碼。</td></tr>
+<tr><td>3C</td>在 SQL Editor 貼上 <code>supabase/02_bootstrap_admin.sql</code>，只在 Editor 內替換管理者信箱占位文字，再執行。</td><td>該帳號取得 admin 角色；不把信箱或密碼寫入公開檔案。</td></tr>
+<tr><td>3D</td>部署 <code>supabase/functions/provision-team/index.ts</code>，設定下列伺服器 Secrets。</td><td>函式存在；未登入、Viewer、調查員呼叫時都不得建立帳號。</td></tr>
+</tbody></table>
+<p>Edge Function Secrets：</p><pre>APP_ORIGIN=https://jaimehuang168.github.io
+PULSO_SUPABASE_SECRET_KEY=只在SupabaseSecrets填入真正的SecretKey</pre>
+<p><code>APP_ORIGIN</code> 不加 repository 子路徑，也不加最後斜線。Secret key 只能留在伺服器，不放入 GitHub variables、ZIP、前端或聊天。<code>verify_jwt=false</code> 不是開放權限；程式內仍須驗證 token 與資料庫中的 active admin，不可刪除。</p>
+<p>使用本機 Supabase CLI 時，在解壓縮後的完整專案資料夾執行：</p><pre>npx supabase login
+npx supabase functions deploy provision-team --project-ref 你的PROJECT_REF --use-api</pre>
+<p>上述指令要在自己的終端機中完成帳號授權。若你尚未安裝 Node.js 或不熟悉 Edge Functions，可先完成第 1、2 步，不必為了上傳 ZIP 先安裝所有工具。</p>
+<label class="check"><input type="checkbox" data-check="backend">SQL、第一位管理者與 Edge Function 已設定；我知道這還不是 60 人驗收。</label>
+<h2>第 4 步：填入兩個公開連線設定</h2>
+<p>在 Supabase 的 Connect 或 API Keys 畫面取得同一個專案的 <strong>Project URL</strong> 與 <strong>Publishable key</strong>。</p>
+<p>開啟 <a href="https://github.com/jaimehuang168/pulso-alto-parana-2026/settings/variables/actions" target="_blank" rel="noopener">GitHub Actions Variables 設定</a>，按 <strong>New repository variable</strong>，新增：</p><table><tr><th>Name</th><th>Value</th></tr><tr><td><code>SUPABASE_URL</code></td><td>以 https:// 開頭的專案網址，格式為 <code>https://專案代碼.supabase.co</code></td></tr><tr><td><code>SUPABASE_PUBLISHABLE_KEY</code></td><td>以 <code>sb_publishable_</code> 開頭的完整公開金鑰</td></tr></table>
+<div class="note">不是 <code>sb_secret_</code>，不是 <code>service_role</code>，不是資料庫密碼。兩個公開連線值本身不提供管理者權限；真正權限仍由登入與後端規則決定。</div>
+<label class="check"><input type="checkbox" data-check="vars">兩個 variables 已建立，且來自同一個 Supabase 專案。</label>
+<h2>第 5 步：啟用 GitHub Pages 並發布</h2>
+<p>開啟 <a href="https://github.com/jaimehuang168/pulso-alto-parana-2026/settings/pages" target="_blank" rel="noopener">Settings → Pages</a>，在 Source 選 <strong>GitHub Actions</strong>。再到 Actions → <strong>Deploy Pulso frontend → Run workflow</strong>，選 main 並執行。</p>
+<p><strong>build 通過但 deploy 被跳過，不代表網站已上線。</strong>只有 deploy 成功，才從 Pages 設定或 deployment 摘要複製實際網址。本指南不提供尚未經發布驗證的預測 App 網址。</p>
+<p>取得網址後，回 Supabase → Authentication → URL Configuration，把 <strong>Site URL</strong> 設為完整 App 網址（包括 repository 路徑）。這和只填網域來源的 APP_ORIGIN 不同。</p>
+<label class="check"><input type="checkbox" data-check="pages">deploy 成功，我已從 GitHub 複製實際 App 網址。</label>
+<h2>第 6 步：帳號、投票所與手機驗收</h2>
+<p>管理者登入後，在 Administración 核對候選人、填入真正投票所地址與授權調查點，再建立 60 位調查員並逐一確認配置。每位人員只拿自己的帳密；不要公開整份 CSV。Viewer 預設關閉。</p>
+<p>演練至少包含：兩支手機分別登錄、中央數量對帳、離線待傳後重開保留、補傳不重算、誤登撤銷、停用帳號生效、Viewer／調查員越權被拒，以及 60 帳號併發及集中回補。前端測試通過不能取代這些項目。</p>
+<label class="check"><input type="checkbox" data-check="acceptance">實機與後端驗收已完成；未完成之前，不分發正式調查任務。</label>
+<h2>終端機方式：可選，不是 ZIP 上傳的前提</h2>
+<p>原始碼已匯入，且電腦已具備 Node.js 與 GitHub CLI 時，在完整專案資料夾執行：</p><pre>node scripts/continue-deploy-zh.mjs --check
+node scripts/continue-deploy-zh.mjs --publish</pre><p>第一行唯讀檢查；第二行要求你在本機確認後才設定 GitHub 連線與 Pages。它不建立新 repository，不會自動改連另一個資料庫，不要求後端 Secret key。</p>
+<h2>官方操作依據</h2><p><a href="https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages">GitHub Pages 自訂工作流程</a>｜<a href="https://supabase.com/docs/guides/getting-started/api-keys">Supabase API keys</a>｜<a href="https://supabase.com/docs/guides/functions/deploy">Edge Functions 部署</a>｜<a href="https://cli.github.com/manual/gh_variable_set">GitHub CLI variables</a></p>
+<p><small>本次更新：2026-09-22。候選人與選舉設定沿用專案負責人提供的資料；本指南不表示官方名單已核對或後端已上線。</small></p><button type="button" id="print">列印這份指南</button></main><script>document.getElementById('print').onclick=()=>window.print();for(const el of document.querySelectorAll('[data-check]')){try{el.checked=localStorage.getItem('pulso-deploy-zh-'+el.dataset.check)==='1';el.onchange=()=>{try{localStorage.setItem('pulso-deploy-zh-'+el.dataset.check,el.checked?'1':'0')}catch{}}}catch{}}</script></body></html>

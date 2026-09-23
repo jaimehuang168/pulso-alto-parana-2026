@@ -1,0 +1,134 @@
+{
+  "passed": 32,
+  "tests": [
+    {
+      "test": "four independent city cards",
+      "passed": true
+    },
+    {
+      "test": "all twelve candidate names",
+      "passed": true
+    },
+    {
+      "test": "start at zero, no fabricated support",
+      "passed": true
+    },
+    {
+      "test": "desktop layout fits",
+      "passed": true
+    },
+    {
+      "test": "mobile capture has four Minga candidates only",
+      "passed": true
+    },
+    {
+      "test": "24px mobile candidate labels",
+      "passed": true
+    },
+    {
+      "test": "large touch targets",
+      "passed": true
+    },
+    {
+      "test": "mobile viewport fits at 390px",
+      "passed": true
+    },
+    {
+      "test": "empty response not registered",
+      "passed": true
+    },
+    {
+      "test": "no-voted confirmation blocks capture",
+      "passed": true
+    },
+    {
+      "test": "offline practice event pending, not counted",
+      "passed": true
+    },
+    {
+      "test": "restored practice link flushes pending once",
+      "passed": true
+    },
+    {
+      "test": "refusal disables consent and cannot select candidate simultaneously",
+      "passed": true
+    },
+    {
+      "test": "refusal saved separately as contact",
+      "passed": true
+    },
+    {
+      "test": "one-shot simulated GPS shows accuracy",
+      "passed": true
+    },
+    {
+      "test": "journal contains three practice records",
+      "passed": true
+    },
+    {
+      "test": "journal includes time and GPS fields",
+      "passed": true
+    },
+    {
+      "test": "interviewer navigation excludes team/settings/results",
+      "passed": true
+    },
+    {
+      "test": "central count includes three contacts",
+      "passed": true
+    },
+    {
+      "test": "station drilldown filters to one city",
+      "passed": true
+    },
+    {
+      "test": "station drilldown shows five assigned operators",
+      "passed": true
+    },
+    {
+      "test": "voided contact removed from sample total",
+      "passed": true
+    },
+    {
+      "test": "viewer remains locked before administrator enables",
+      "passed": true
+    },
+    {
+      "test": "viewer cannot see journal/team or create button",
+      "passed": true
+    },
+    {
+      "test": "authorized practice viewer sees only aggregates",
+      "passed": true
+    },
+    {
+      "test": "320px dashboard does not overflow",
+      "passed": true
+    },
+    {
+      "test": "four Presidente Franco candidates",
+      "passed": true
+    },
+    {
+      "test": "320px capture does not overflow",
+      "passed": true
+    },
+    {
+      "test": "mobile administration fits",
+      "passed": true
+    },
+    {
+      "test": "candidate and polling-location editors present",
+      "passed": true
+    },
+    {
+      "test": "reset returns to zero without preload",
+      "passed": true
+    },
+    {
+      "test": "no uncaught JavaScript errors",
+      "passed": true
+    }
+  ],
+  "limitations": "DOM practice mode only. No real IndexedDB persistence/cloud/GPS/network/60-device tests."
+}

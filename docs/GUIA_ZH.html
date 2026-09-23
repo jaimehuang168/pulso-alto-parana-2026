@@ -1,0 +1,107 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pulso v2｜中文操作與部署指南</title><style>
+:root{font-family:"Segoe UI","Microsoft JhengHei",sans-serif;color:#183541;background:#f2f6f7;font-size:18px}*{box-sizing:border-box}body{margin:0}header{background:#102e37;color:#fff;padding:42px 5vw}header span{color:#d7f88b;letter-spacing:3px;font-size:14px}header h1{font-size:38px;margin:12px 0}header p{color:#d0e0e4;max-width:850px;line-height:1.8}.status{padding:20px 24px;background:#fff4dc;color:#79571e;border-left:5px solid #b68025;margin:0 0 25px;line-height:1.8;border-radius:8px}main{max-width:1060px;margin:30px auto;padding:32px 40px;background:white;border-radius:18px;box-shadow:0 10px 30px #18354112}h1{font-size:31px}h2{font-size:25px;color:#087e7b;border-top:1px solid #d8e5e9;padding-top:28px;margin-top:34px}h3{font-size:22px}p,li{line-height:1.95;overflow-wrap:anywhere}a{color:#067a74;overflow-wrap:anywhere}code{font-family:Consolas,monospace;font-size:.87em;background:#f0f5f6;padding:2px 5px;border-radius:4px}pre{overflow:auto;background:#132f3a;color:#e4f3ed;padding:22px;border-radius:12px;line-height:1.7}pre code{background:none;color:inherit;padding:0}table{width:100%;border-collapse:collapse;margin:25px 0;font-size:16px;display:block;overflow:auto}th{background:#e6f2ef;text-align:left}td,th{border:1px solid #dbe6e9;padding:14px 16px;line-height:1.8;min-width:100px}th:first-child,td:first-child{min-width:145px}.footer{text-align:center;padding:25px;font-size:14px;color:#59717d}.tools{display:flex;gap:14px;flex-wrap:wrap}.tools a{background:#087e7b;color:white;text-decoration:none;display:inline-block;border-radius:10px;padding:14px 22px;font-weight:650}@media(max-width:700px){header{padding:30px 22px}header h1{font-size:30px}main{padding:25px 20px;margin:16px 12px}h1{font-size:26px}h2{font-size:23px}p,li{font-size:17px}pre{padding:16px}}@media print{header{background:white;color:black}.tools{display:none}main{margin:0;box-shadow:none;max-width:none}h2{break-after:avoid}pre,table{break-inside:avoid}}
+</style></head><body><header><span>PULSO 2.0 · ALTO PARANÁ</span><h1>從手機調查，到四市統計</h1><p>西班牙文 Web App｜2026.10.04｜四市各 15 位調查員｜管理者・調查員・Viewer</p></header><main><div class="status"><strong>交付狀態：</strong>示範與原始碼已完成，GitHub / Supabase 尚未部署。此文件不代表已有正式多人共用網址。正式資料須在完成帳號、投票所、雲端權限及實機驗收後才開始收集。</div><div class="tools"><a href="../DEMO_ABRIR_EN_NAVEGADOR.html">開啟新版示範</a></div><h1>Pulso v2｜中文部署與操作指南</h1>
+<p><strong>適用日期：2026 年 9 月 22 日。選舉設定：2026 年 10 月 4 日、四市市長選舉。</strong></p>
+<h2>先看目前狀態</h2>
+<p>新版示範與原始碼已完成，但本次尚未建立 GitHub repository、發佈 GitHub Pages 網站或安裝 Supabase 資料庫。因此目前沒有可提供給 60 支手機共用的正式網址。GitHub 連線已確認帳號，但本次工具只提供讀取操作。以下腳本讓你在自己的 Windows 電腦完成授權與發佈；不需要把任何 GitHub token 或後端秘密金鑰傳到聊天中。</p>
+<p>介面示範可以立即試用；正式上線還需要後端安裝、投票所資料、正式帳號及驗收。不要用示範檔收集正式調查。</p>
+<h2>1｜立即操作新版示範</h2>
+<p>開啟另附的 <code>Pulso_Boca_de_Urna_v2_ES.html</code>，不需安裝 Python。管理面板從零筆開始，候選人依你提供的名單；所有示範投票所清楚標記 NO OFICIAL，並非官方投票所資料。</p>
+<p>右上角 <strong>Cambiar rol</strong> 可在示範中切換 Administrador、Encuestador、Viewer。選 Encuestador 後，選城市與 01–15 號調查員。點 <strong>Abrir perfil</strong> 進入手機問卷。正式版沒有這個角色切換器，必須用個人帳號登入。</p>
+<p>調查流程：確認已投票 → 確認匿名自願受訪 → 選候選人或其他答案 → 可選擇取得自己的 GPS → Guardar encuesta。拒訪時不填投票偏好。每筆另外保存完成時間及伺服器收件時間。測試 Simular sin conexión 時，紀錄只在待傳區，恢復連線並收到確認後才納入統計。</p>
+<p>某些預覽器、無痕模式或瀏覽器政策禁止本機儲存；示範會清楚顯示「此預覽不會在關閉後保留資料」。這不是正式離線功能。正式版在本機儲存不可用時不允許連接雲端調查。</p>
+<h2>2｜正式版資料與權限</h2>
+<p>四城市各保留 15 個獨立調查員名額。可設定一市多個投票所，不限制為示範的三個；同一投票所可分配多位調查員。開放正式收件後，候選人、投票所及調查員選區／投票所配置鎖定，避免把前後不同口徑混在一起。人員顯示姓名、帳號停用及 Viewer 開關仍可管理。</p>
+<table>
+<thead>
+<tr>
+  <th>角色</th>
+  <th>可操作內容</th>
+  <th>不提供的內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Administrador</td>
+  <td>四市彙總、投票所、逐員數量、逐筆紀錄、調查員 GPS、帳號與匯出</td>
+  <td>無法把前端介面當作官方開票系統</td>
+</tr>
+<tr>
+  <td>Encuestador</td>
+  <td>指派投票所、自己的問卷、待傳與自己的紀錄</td>
+  <td>其他人的逐筆紀錄、全區結果及管理頁</td>
+</tr>
+<tr>
+  <td>Viewer</td>
+  <td>管理者允許的城市／投票所彙總</td>
+  <td>登錄、修改、帳號、人員 GPS、逐筆問卷及匯出</td>
+</tr>
+</tbody>
+</table>
+<p>Viewer 預設關閉。管理者可啟用，但這不是符合選舉發布法規的自動保證。</p>
+<p>位置分為投票所地址／授權調查點，以及選填的調查員手機 GPS。每次定位須按鈕觸發及取得瀏覽器同意；沒有持續背景追蹤。位置過舊會標記為失效，不冒充最新定位。沒有 GPS 時仍保存指定投票所。手機時間與 GPS 可受裝置設定影響，不是獨立的到場證明。</p>
+<h2>3｜建立專用 Supabase 專案</h2>
+<p>在你自己管理的 Supabase 帳號建立一個<strong>全新、專用</strong>的 project。不要把安裝 SQL 貼到其他業務的既有資料庫。服務方案、備份、保存期間及費用需由帳號管理者確認；本次沒有建立付費資源。</p>
+<p>到 SQL Editor 執行 <code>supabase/00_INSTALL_NEW_PROJECT.sql</code>。這個檔案已依序包含 001 及 002，不要再重複執行兩份 migration。它建立資料表、權限、統計函式與 12 位候選人，正式資料保持零筆，狀態為 setup。若執行失敗，保留錯誤訊息供修正，不要先關閉 RLS 或放寬成所有人讀寫。第二階段不接受已存在正式調查或已開放的舊版資料；遷移舊系統必須另作計畫。</p>
+<p>若以 migration CLI 管理，改為依序執行 migrations，不要同時用整合 SQL。先完成測試專案，再安裝正式專案。</p>
+<h2>4｜建立第一位管理者</h2>
+<p>到 Supabase Authentication → Users 建立管理者帳號，使用你自己的可管理電子郵件與獨立強密碼。不要開放公眾自行註冊，也不要設定「註冊即成為 admin」的觸發器。</p>
+<p>用文字編輯器打開 <code>supabase/02_bootstrap_admin.sql</code>，把 <code>REPLACE_WITH_COORDINATOR_EMAIL</code> 換成剛建立帳號的電子郵件，再到 SQL Editor 執行。這一步只授權該帳號為管理者；不在前端寫死密碼。第一位管理者登入時請用該電子郵件，而不是 COORD-01。其他透過 App 建立的 ADMIN-/VIEW-/調查員代碼則可用代碼登入。</p>
+<h2>5｜部署帳號管理函式</h2>
+<p>此步驟用 Supabase CLI，在專案根目錄執行。請先依官方文件安裝 CLI，建議把使用版本固定；<code>supabase/config.toml</code> 已包含本函式設定，勿覆寫成空白。</p>
+<pre><code class="language-powershell">supabase login
+supabase link --project-ref 你的PROJECT_REF
+supabase functions deploy provision-team --project-ref 你的PROJECT_REF --use-api
+</code></pre>
+<p>在 Supabase 的 Edge Function Secrets 設定：</p>
+<table>
+<thead>
+<tr>
+  <th>名称</th>
+  <th>填寫內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>APP_ORIGIN</code></td>
+  <td>網站來源，例如 <code>https://你的GitHub帳號.github.io</code>。只填 origin，不加 repository 子路徑</td>
+</tr>
+<tr>
+  <td><code>PULSO_SUPABASE_SECRET_KEY</code></td>
+  <td>專門給伺服器使用的 Supabase secret key；只能留在 Supabase Secrets</td>
+</tr>
+</tbody>
+</table>
+<p><code>SUPABASE_URL</code> 由執行環境提供。程式也保留 service-role 的相容讀取方式，但新專案建議使用 secret key。不要把 secret key、service_role 或資料庫密碼填入 <code>web/config.js</code>、GitHub variables 或聊天。</p>
+<p>函式的 <code>verify_jwt=false</code> 不是無驗證開放：函式內仍必須使用 Supabase Auth 驗證使用者 token，再查資料庫中的 active administrator。這段檢查不可刪除。必須完成未登入、Viewer、調查員直接呼叫函式都被拒絕的驗收。</p>
+<p>官方部署指引：https://supabase.com/docs/guides/functions/deploy</p>
+<h2>6｜從 Windows 發佈 GitHub Pages</h2>
+<p>需要 Git、GitHub CLI (<code>gh</code>) 及 Node.js。由各自官方安裝來源取得，安裝後重新開啟 PowerShell。不需要 Python，也不需要把秘密 token 寫進腳本。</p>
+<p>將 ZIP 解壓到一個新資料夾，進入專案根目錄後執行：</p>
+<pre><code class="language-powershell">.\scripts\Deploy-GitHub.ps1
+</code></pre>
+<p>腳本會確認 GitHub 登入；必要時開瀏覽器登入。預設準備建立一個<strong>新的公開原始碼</strong> repository：<code>pulso-alto-parana-2026</code>。建立前會要求你完整輸入 repository 名稱確認。若同名 repository 已存在，或該資料夾已有 <code>.git</code>，腳本會停止而不覆盖。需要別的名稱時：</p>
+<pre><code class="language-powershell">.\scripts\Deploy-GitHub.ps1 -RepoName 'pulso-municipales-2026'
+</code></pre>
+<p>腳本只索取兩個<strong>可公開的連線設定</strong>：Supabase project URL，以及以 <code>sb_publishable_</code> 開頭的 publishable key。它們會成為 GitHub repository variables。真正授權仍由登入與資料庫規則控制，publishable key 本身不是密碼。</p>
+<p>GitHub Actions 會跑計算測試、下載固定版本 SDK、產生公開設定、上傳 <code>web/</code> 並部署 GitHub Pages。腳本等 workflow 成功後才顯示 GitHub API 回傳的實際網址。若 Pages 自動啟用失敗，依提示到 Settings → Pages → Source 選 GitHub Actions，再重新執行工作流程。腳本停止時不表示網站已上線。</p>
+<p>GitHub Pages 只能提供靜態網頁，不能代替 Supabase 資料库。登入頁是公開網址，但投票回答、GPS、CSV 與帳號密碼不可放進 repository。免費方案與私人 repository 的支援範圍需按 GitHub 帳號方案確認；這份腳本只針對經你確認的新公開原始碼 repository，不會把既有私人專案改成公開。若需私人原始碼，改按 GitHub 官方文件手動配置。</p>
+<p>正式發佈 <code>web/</code> 不包含示範角色切換器。<code>_headers</code> 在 GitHub Pages 不會被執行；如另部署至支援該檔案的主機，才會套用其中的 HTTP headers。不要把它誤當成 Pages 上已存在的保護。</p>
+<p>GitHub Pages 官方指引：https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages</p>
+<h2>7｜在 App 配置投票所及人員</h2>
+<p>管理者登入 → Administración → Candidaturas y locales。逐城市填入實際投票所名稱、代碼、地址、授權調查點，以及選填的投票所經緯度。不能保留範例名稱／空白地址後就開放正式收件。候選人與 Lista 已依提供名單填好，仍需與當次官方登記名單核對。</p>
+<p>按 Crear 60 encuestadores 建立帳號，並把一次性帳密 CSV 保存到<strong>repository 以外的私人位置</strong>。每個人只收到自己的帳密，不能把全部名單放在公開群組或 GitHub。新建帳號會輪流分配到各市有效投票所，管理者必須在 Equipo 重新確認及修改每位人員的實際分工。第一次建立時不是已經知道你的人員姓名或排班。</p>
+<p>Viewer 與新增管理者在 Crear viewer / administrador 建立；指定 Viewer 看全部四市或單一城市。只有管理者能建立／停用帳號。重設密碼由管理者執行；自行改密碼可由 Guía 進入。</p>
+<p>完成採樣規則、工作點及班次，確認正確選舉職位與日期，才勾選已核實目錄。正式系統只允許在設定選舉日期開放，且必須每市有 15 名可用且有配置的調查員。要提前演練，請用<strong>獨立測試專案</strong>把演練日期改成當天，不要在正式庫混入測試資料。</p>
+<h2>8｜正式發出手機連結前的驗收</h2>
+<p>必須在同一個測試後端用至少兩支真正手機，以及獨立管理者畫面，確認資料同步；再執行 60 帳號的併發／尖峰回補測試。詳細清單在 <code>docs/ACCEPTANCE.md</code>。程式碼備齊不代表這些項目已驗收。</p>
+<p>特別確認：重複送相同 UUID 不重算；改 UUID 內容被拒；調查員偽造別的投票所被拒；Viewer 直接呼叫寫入 API／逐筆 API 被拒；停用帳號立即失去資料權限；關掉網路、存問卷、關閉重開 App 後待傳仍在；恢復連線後只納入一次；iPhone/Safari 及 Android/Chrome 各自測試定位權限與儲存。</p>
+<p>只儲存本機但未取得收件確認的資料，中央無法知道；不能用中央數字推算離線手機目前有多少筆。禁止清除待傳手機的瀏覽器資料、借帳號跨人使用或在收件期間任意更換網址／資料庫。</p>
+<h2>9｜統計解讀與發布</h2>
+<p>各城市候選人維持目錄順序，沒有勝選標章或預測排名。百分比分母是明確回答某候選人的筆數；空白、廢票、不透露與拒訪另列。這是非加權的樣本比例，不是全體投票結果；問卷回覆率也不是投票率。需要代表性、加權或信賴區間時，必須另行設計並驗證採樣方法。</p>
+<p>BACN 公布的選舉法第 306 條限制在規定關閉投票所時間後一小時以前，發布出口民調結果。私人 Viewer、群組、截圖、CSV 不會自動豁免。啟用 Viewer 前應確認當次適用規範、正式關閉時間及實際發布方式；本版不假設固定下午幾點自動解鎖。</p>
+<p>法條來源：https://www.bacn.gov.py/leyes-paraguayas/2346/ley-n-834-establece-el-codigo-electoral-paraguayo</p>
+<p>日期來源（TSJE）：https://www.tsje.gov.py/noticias/leer/11975-avanza-cronograma-electoral-para-las-elecciones-municipales-2026.html</p>
+<h2>仍須提供或確認的資料</h2>
+<p>四市真正的投票所清單（名稱、地址、調查點）、60 人姓名／代碼分配與班次、官方候選人核對結果、採樣與拒訪記錄規則、資料保存期限、正式 Supabase 專案及 GitHub 發佈執行權限。本則訊息沒有收到新參考附圖，因此外觀沿用原版並重新放大設計，沒有聲稱已照未提供的圖片重製。</p>
+</main><div class="footer">Pulso 2.0 · 文件版本 2026-09-22 · 候選人依使用者提供，尚待正式名單核對。</div></body></html>

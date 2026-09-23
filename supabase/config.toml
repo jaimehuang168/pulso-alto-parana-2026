@@ -1,0 +1,4 @@
+project_id = "pulso-alto-parana-2026"
+
+[functions.provision-team]
+verify_jwt = false

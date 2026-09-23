@@ -1,0 +1,23 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*
+*CREDENCIALES*
+*CONTACTOS*
+*records*.csv
+*team_activity*.csv
+*aggregates*.csv
+node_modules/
+.supabase/
+supabase/.temp/
+.netlify/
+web/supabase-vendor.js
+DEMO_ABRIR_EN_NAVEGADOR.html
+tests/artifacts/
+playwright-report/
+
+# Python test bytecode is not source code.
+__pycache__/
+*.py[cod]
