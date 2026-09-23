@@ -1,0 +1,325 @@
+name: Repair mobile login feedback
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/fix-mobile-login.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: mobile-login-repair
+  cancel-in-progress: false
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Apply reviewed presentation-only correction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          expected={'web/app.js':'8523e29e148a4c99907e1e28122adc12860eba31','web/styles.css':'d3b9104e3d41c1e020064f563ac401db1a29761e','web/sw.js':'4f6ca700e7cd4ce098ec14a43105ccde8251aba1'}
+          for name,sha in expected.items():
+              data=Path(name).read_bytes()
+              actual=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+              if actual!=sha:raise SystemExit('Source differs or already patched; not overwriting: '+name)
+          app=Path('web/app.js').read_text()
+          def replace(old,new):
+              global app
+              if app.count(old)!=1:raise SystemExit('Expected exactly one reviewed match: '+old[:80])
+              app=app.replace(old,new,1)
+          helper=r'''/* 登入錯誤只顯示安全、固定的西文訊息；不顯示伺服器原文、密碼或憑證。 */
+          function loginFeedback(error,stage='login'){
+           const code=String(error?.code||''),message=String(error?.message||''),status=Number(error?.status)||0;
+           if(stage==='access'&&(code==='42501'||code==='ACCOUNT_DISABLED'||/cuenta no habilitada|sin perfil asignado/i.test(message)))return {
+            code:'ACCESO-403',title:'Cuenta no habilitada',
+            message:'Esta cuenta está desactivada o no tiene un perfil asignado.',
+            next:'Contacte a la administración para revisar su acceso. No cree otra cuenta.'
+           };
+           if(code==='email_not_confirmed')return {code:'CORREO-01',title:'Correo sin confirmar',message:'Debe confirmar su correo antes de ingresar.',next:'Revise su correo o solicite ayuda a la administración.'};
+           if(code==='user_banned')return {code:'ACCESO-403',title:'Cuenta no habilitada',message:'Esta cuenta no tiene acceso en este momento.',next:'Contacte a la administración para revisar su acceso.'};
+           if(status===429||/rate_limit|too_many_requests/.test(code))return {code:'ESPERA-429',title:'Demasiados intentos',message:'El servicio limitó temporalmente los intentos de ingreso.',next:'Espere unos minutos y vuelva a intentarlo.'};
+           if(error?.name==='AuthRetryableFetchError'||error?.name==='AbortError'||error?.name==='TimeoutError'||/failed to fetch|network|load failed|sin conexi[oó]n|sin red|timeout|timed out/i.test(message))return {
+            code:'RED-01',title:'No se pudo conectar',message:'No fue posible verificar el acceso con el servidor.',next:'Compruebe Internet y vuelva a intentarlo. Esto no confirma que su cuenta esté desactivada.'
+           };
+           if(stage==='access'&&(status===401||['PGRST301','PGRST303','session_not_found','refresh_token_not_found'].includes(code)))return {code:'SESION-401',title:'Vuelva a iniciar sesión',message:'La sesión ya no es válida o ha vencido.',next:'Ingrese otra vez con su cuenta individual.'};
+           if(code==='invalid_credentials'||/usuario o contraseña no válidos|invalid login credentials/i.test(message))return {code:'INGRESO-01',title:'No se pudo iniciar sesión',message:'El código o correo y la contraseña no coinciden.',next:'Revise ambos campos y vuelva a intentarlo. No comparta su contraseña.'};
+           if(/configure el servidor|URL HTTPS publicada|biblioteca de nube|no hay almacenamiento persistente/i.test(message))return {code:'CONFIG-01',title:'No se pudo preparar el acceso',message:'La conexión o el almacenamiento del navegador no está disponible.',next:'Abra la dirección oficial en un navegador normal y solicite ayuda si el problema continúa.'};
+           return {code:stage==='access'?'ACCESO-ERROR':'INGRESO-ERROR',title:'No se pudo completar el ingreso',message:'El acceso no pudo verificarse en este momento.',next:'Vuelva a intentarlo. Si continúa, informe esta referencia a la administración.'};
+          }
+          function loginFeedbackHTML(){
+           const notice=S.loginError;
+           return `<div id="login-feedback" class="login-feedback" role="alert" aria-atomic="true" tabindex="-1" ${notice?'':'hidden'}>${notice?`<h3>${E(notice.title)}</h3><p>${E(notice.message)}</p><p class="login-next">${E(notice.next)}</p><p class="login-reference">Referencia: ${E(notice.code)} · L2</p>`:''}</div>`;
+          }
+          function revealLoginFeedback(){
+           const box=document.getElementById('login-feedback');
+           if(!box||box.hidden)return;
+           const viewport=window.visualViewport,top=viewport?.offsetTop||0,height=viewport?.height||innerHeight,rect=box.getBoundingClientRect();
+           if(rect.top<top+12||rect.bottom>top+height-12)box.scrollIntoView({block:'start',behavior:'instant'});
+          }
+          function showLoginFeedback(error,stage='access'){
+           const currentUser=document.querySelector('#login-form [name=user]')?.value||S.profile?.code||S.loginUser||'';
+           S.loginUser=String(currentUser).trim().slice(0,254);
+           S.loginError=loginFeedback(error,stage);
+           // 清除目前畫面的受保護資料，不刪除 IndexedDB、待傳紀錄或其他人的工作階段。
+           S.snap=null;S.meta=null;S.profile=null;S.mode=null;S.records=[];S.accounts=[];S.queue=[];S.credentials=[];
+           S.choice=null;S.geo={geo_status:'not_requested'};S.live=false;S.lastError='';S.busy=false;closeModal();
+           if(S.channel&&S.sb){try{Promise.resolve(S.sb.removeChannel(S.channel)).catch(()=>{});}catch{}S.channel=null;}
+           render();
+           requestAnimationFrame(()=>{const box=document.getElementById('login-feedback');if(!box||box.hidden)return;box.focus({preventScroll:true});revealLoginFeedback();});
+          }
+          window.visualViewport?.addEventListener('resize',()=>{if(document.activeElement?.id==='login-feedback')requestAnimationFrame(revealLoginFeedback);});
+          '''
+          replace("lastError:'',live:false", "lastError:'',loginError:null,loginUser:'',live:false")
+          replace('function download(text,name,type=',helper+'\nfunction download(text,name,type=')
+          replace('return `<div class="welcome"><section', 'return `<div class="welcome${S.loginError?\' login-has-error\':\'\'}"><section')
+          replace('<form id="login-form"><label', '${loginFeedbackHTML()}<form id="login-form" aria-describedby="login-feedback"><label')
+          replace('<input name="user" placeholder="CDE-01 / VIEW-001 / correo" autocomplete="username" required>', '<input name="user" value="${E(S.loginUser||\'\')}" placeholder="CDE-01 / VIEW-001 / correo" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="254" required>')
+          old="<p class=\"hint\">${S.config.supabaseUrl?'Conexión configurada. Solo cuentas autorizadas.':'El servidor aún no está configurado. No hay conexión entre teléfonos.'}</p>"
+          replace(old,old+'<small class="login-access-version">Acceso móvil L2</small>')
+          replace("}else{S.snap=null;S.meta=null;S.profile=null;S.mode=null;S.records=[];S.accounts=[];render();}}if(force)fail(e);", "}else{showLoginFeedback(e,'access');}}if(force&&!S.loginError)fail(e);")
+          old=next(line for line in app.splitlines() if line.startswith(" case 'login-form':"))
+          replace(old,""" case 'login-form':{
+           if(S.busy)return;
+           S.busy=true;S.loginError=null;S.loginUser=form.elements.user.value.trim();
+           const previous=document.getElementById('login-feedback');if(previous){previous.hidden=true;previous.textContent='';}
+           const button=form.querySelector('[type=submit]');button.disabled=true;button.textContent='Conectando…';
+           let stage='login';
+           try{
+            let user=S.loginUser;if(!user.includes('@'))user=user.toLowerCase()+'@pulso-encuestadores.invalid';
+            const {error}=await(await client()).auth.signInWithPassword({email:user,password:form.elements.password.value});
+            if(error)throw error;
+            stage='access';await enterCloud();
+           }catch(e){showLoginFeedback(e,stage);}
+           finally{S.busy=false;if(button.isConnected){button.disabled=false;button.textContent='Ingresar';}}
+           break;
+          }""")
+          replace("if(data.session)await enterCloud();", "if(data.session){S.loginUser=data.session.user?.email||'';await enterCloud();}")
+          replace("}catch(e){fail(e);S.mode=null;S.profile=null;render();}}if(!CFG.standalone", "}catch(e){showLoginFeedback(e,'access');}}if(!CFG.standalone")
+          replace('init().catch(fail);',"init().catch(e=>showLoginFeedback(e,'startup'));")
+          css=r'''
+          /* L2：常駐登入訊息及手機浮動通知。僅改顯示，不改權限。 */
+          .login-feedback{margin:20px 0 24px;padding:20px;border:2px solid #9c3d2f;border-left-width:6px;border-radius:14px;background:#fff5f1;color:#54221a;overflow-wrap:anywhere;scroll-margin-top:24px;scroll-margin-top:calc(18px + env(safe-area-inset-top,0px));}
+          .login-feedback[hidden]{display:none}
+          .login-feedback h3{margin:0 0 12px;font-size:24px;font-weight:750;line-height:1.3;color:#642319}
+          .login-feedback p{margin:10px 0;font-size:18px;line-height:1.55;color:#54221a}
+          .login-feedback .login-next{font-weight:600}
+          .login-feedback .login-reference{font-size:14px;line-height:1.5;color:#70463e;margin-top:16px;margin-bottom:0}
+          .login-feedback:focus{outline:3px solid #1b6b66;outline-offset:3px}
+          .login-access-version{display:block;margin-top:14px;color:var(--muted);font-size:13px;line-height:1.5}
+          @media(max-width:760px){
+           .toastarea{left:max(14px,env(safe-area-inset-left,0px));right:max(14px,env(safe-area-inset-right,0px));width:auto;max-width:none;transform:none;bottom:calc(90px + env(safe-area-inset-bottom,0px));}
+           .toast{max-width:none;width:100%;overflow-wrap:anywhere}
+           .login-feedback{padding:17px 15px;margin:18px 0 22px;min-width:0}
+           .login-feedback h3{font-size:23px}
+           .login-feedback p{font-size:18px}
+           .login-has-error .welcomeleft{padding:22px 24px;min-height:0}
+           .login-has-error .welcomeleft .brand{margin-bottom:0}
+           .login-has-error .welcometitle,.login-has-error .welcomestats,.login-has-error .privacylock{display:none}
+           .login-has-error .welcomeright{padding:24px 22px 40px;align-items:flex-start}
+          }
+          '''
+          Path('web/app.js').write_text(app)
+          Path('web/styles.css').write_text(Path('web/styles.css').read_text()+css)
+          p=Path('web/sw.js');p.write_text(p.read_text().replace("const CACHE='pulso-shell-v2.0.0';","const CACHE='pulso-shell-v2.0.1-login-L2';"))
+          PY
+      - name: Generate regression tests using isolated SDK responses
+        shell: bash
+        run: |
+          mkdir -p tests/fixtures
+          cat > tests/login-feedback.test.cjs <<'JS'
+          'use strict';
+          const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+          const source=fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8');
+          const start=source.indexOf('function loginFeedback('),end=source.indexOf('function loginFeedbackHTML()');assert(start>=0&&end>start);
+          const context={};vm.runInNewContext(source.slice(start,end)+';this.classify=loginFeedback;',context);const map=context.classify;
+          const examples=[
+           ['disabled bootstrap',{code:'42501',message:'Cuenta no habilitada o sin perfil asignado.'},'access','ACCESO-403'],
+           ['missing active flag',{message:'Cuenta no habilitada.'},'access','ACCESO-403'],
+           ['invalid password',{code:'invalid_credentials'},'login','INGRESO-01'],
+           ['email confirmation',{code:'email_not_confirmed'},'login','CORREO-01'],
+           ['auth blocked',{code:'user_banned'},'login','ACCESO-403'],
+           ['rate limit',{status:429},'login','ESPERA-429'],
+           ['fetch network',{name:'AuthRetryableFetchError'},'login','RED-01'],
+           ['timeout',{name:'TimeoutError'},'access','RED-01'],
+           ['offline network',{message:'Failed to fetch'},'access','RED-01'],
+           ['expired session',{code:'PGRST301',status:401},'access','SESION-401'],
+           ['missing connection',{message:'Configure el servidor antes de iniciar sesión.'},'login','CONFIG-01'],
+           ['unknown auth error',{message:'unknown'},'login','INGRESO-ERROR'],
+           ['unknown data error',{message:'unknown'},'access','ACCESO-ERROR']
+          ];
+          for(const [name,error,stage,expected] of examples)test('login notice: '+name,()=>{const n=map(error,stage);assert.equal(n.code,expected);assert.ok(n.title.length>5&&n.message.length>10&&n.next.length>10);});
+          test('server payload and credentials never included',()=>{const raw='PASSWORD_TEST_PRIVATE sb_secret_test PRIVATE_TOKEN <script>alert(1)</script>';for(const stage of ['login','access'])assert(!JSON.stringify(map({message:raw},stage)).includes('PRIVATE'));});
+          test('generic auth failure is not labelled deactivated',()=>assert.equal(map({status:403,message:'unknown'},'login').code,'INGRESO-ERROR'));
+          test('persistent alert is in login form area',()=>{assert(source.includes('id="login-feedback"'));assert(source.includes('role="alert" aria-atomic="true"'));assert(source.includes('${loginFeedbackHTML()}<form id="login-form"'));});
+          test('error path preserves outbox and other sessions',()=>{const helper=source.slice(source.indexOf('function showLoginFeedback('),source.indexOf('window.visualViewport?.'));assert(!/store\.(?:delete|clear)|indexedDB\.deleteDatabase|localStorage\.clear|signOut/.test(helper));});
+          test('mobile toast removes inherited translation',()=>{const css=fs.readFileSync(path.join(__dirname,'../web/styles.css'),'utf8');const last=css.slice(css.indexOf('/* L2：'));assert(last.includes('width:auto;max-width:none;transform:none;'));assert(last.includes('.login-feedback p{font-size:18px}'));});
+          JS
+          cat > tests/fixtures/login-sdk.js <<'JS'
+          // 隔離瀏覽器測試用；替代 SDK，絕不呼叫 Supabase 或真實帳號。
+          (()=>{
+           const session={user:{id:'qa-browser-user',email:'view-qa001@pulso-encuestadores.invalid'},expires_at:Math.floor(Date.now()/1000)+3600,access_token:'NOT_A_REAL_TOKEN'};
+           window.qaLogin={scenario:window.qaScenario||'disabled',session:!!window.qaSession,calls:[],writes:0};const q=window.qaLogin;
+           const failures={wrong:{code:'invalid_credentials',status:400,message:'Invalid login credentials'},network:{name:'AuthRetryableFetchError',message:'Failed to fetch'},unconfirmed:{code:'email_not_confirmed',message:'Email not confirmed'},rate:{status:429,message:'Too many requests'}};
+           const client={
+            auth:{getSession:async()=>({data:{session:q.session?session:null},error:null}),signInWithPassword:async()=>{await new Promise(r=>setTimeout(r,40));const e=failures[q.scenario];if(e)return{data:{session:null},error:e};q.session=true;return{data:{session,user:session.user},error:null};},signOut:async()=>{q.session=false;return{error:null};},getUser:async()=>({data:{user:session.user},error:null})},
+            rpc(name){q.calls.push(name);let response;if(!['bootstrap','ping'].includes(name)){q.writes++;response={data:null,error:{code:'42501',message:'Unexpected test RPC'}};}
+             else if(name==='ping')response={data:null,error:null};
+             else if(q.scenario!=='active')response={data:null,error:{code:'42501',message:'Cuenta no habilitada o sin perfil asignado.'}};
+             else response={error:null,data:{profile:{id:session.user.id,code:'VIEW-QA001',role:'viewer',district_id:'cde',active:true},settings:{id:1,state:'setup',viewer_enabled:false},districts:[{id:'cde',name:'Ciudad del Este'}],candidates:[],stations:[]}};
+             const result=Promise.resolve(response);result.abortSignal=()=>result;return result;
+            },
+            channel(){const channel={on:()=>channel,subscribe:fn=>{fn('SUBSCRIBED');return channel;}};return channel;},removeChannel:async()=>{},functions:{invoke:async()=>{q.writes++;throw new Error('No test writes allowed');}}
+           };window.supabase={createClient:()=>client};
+          })();
+          JS
+          cat > tests/login-mobile.py <<'PY'
+          """真實瀏覽器與 IndexedDB，模擬 Auth/RPC；所有非本機網路封鎖，沒有正式庫寫入。"""
+          from pathlib import Path
+          import functools,http.server,threading,os,json,traceback
+          from playwright.sync_api import sync_playwright
+          ROOT=Path(__file__).resolve().parents[1]
+          OUT=Path(os.environ.get('LOGIN_TEST_OUTPUT',ROOT/'login-test-results'));OUT.mkdir(parents=True,exist_ok=True)
+          class Quiet(http.server.SimpleHTTPRequestHandler):
+              def log_message(self,*args):pass
+          server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Quiet,directory=str(ROOT/'web')))
+          threading.Thread(target=server.serve_forever,daemon=True).start();base=f'http://127.0.0.1:{server.server_port}/'
+          fixture=(ROOT/'tests/fixtures/login-sdk.js').read_text();results=[]
+          def record(name,fn):
+              try:fn();results.append({'name':name,'pass':True})
+              except Exception as e:results.append({'name':name,'pass':False,'error':str(e)[:700]});print(traceback.format_exc())
+              print(json.dumps(results[-1],ensure_ascii=False),flush=True)
+          def expect(value,message='assertion failed'):assert value,message
+          with sync_playwright() as pw:
+           for engine in os.environ.get('LOGIN_BROWSERS','chromium,webkit').split(','):
+              browser=getattr(pw,engine).launch(headless=True)
+              def page_for(width=390,height=844,scenario='disabled',session=False):
+                  ctx=browser.new_context(viewport={'width':width,'height':height},is_mobile=width<760,has_touch=width<760,device_scale_factor=1,service_workers='block')
+                  page=ctx.new_page();page.set_default_timeout(6000);external=[];errors=[]
+                  page.on('pageerror',lambda e:errors.append(str(e)))
+                  def route(req):
+                      if not req.request.url.startswith(base):external.append(req.request.url);req.abort();return
+                      if req.request.url.endswith('/config.js'):req.fulfill(status=200,content_type='application/javascript',body="window.PULSO_CONFIG={supabaseUrl:'https://qa-only.example.invalid',supabasePublishableKey:'sb_publishable_fixture',allowDemo:false};")
+                      else:req.continue_()
+                  page.route('**/*',route)
+                  page.add_init_script(f'window.qaScenario={json.dumps(scenario)};window.qaSession={str(session).lower()};\n'+fixture)
+                  page.goto(base);page.locator('#login-form').wait_for();return ctx,page,external,errors
+              def submit(page):
+                  page.locator('#login-form [name=user]').fill('VIEW-QA001');page.locator('#login-form [name=password]').fill('fixture-password-not-real')
+                  page.locator('#login-form [type=submit]').click();page.locator('#login-feedback:not([hidden])').wait_for();page.wait_for_timeout(180)
+              for width,height in [(320,640),(390,844),(430,932),(768,1024),(1440,900)]:
+                  def layout(w=width,h=height):
+                      ctx,p,ext,errors=page_for(w,h)
+                      try:
+                          submit(p);box=p.locator('#login-feedback');r=box.bounding_box()
+                          expect('Cuenta no habilitada' in box.inner_text());expect(r['x']>=0 and r['x']+r['width']<=w+1,'alert clipped horizontally')
+                          expect(r['y']>=-1 and r['y']<h-60,'alert not scrolled into view');expect(p.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),'page overflows')
+                          expect(p.evaluate("document.activeElement.id==='login-feedback'"),'focus not on alert');expect(int(box.locator('p').first.evaluate('(e)=>parseFloat(getComputedStyle(e).fontSize)'))>=18)
+                          expect(p.locator('#login-form [name=user]').input_value()=='VIEW-QA001');expect(p.locator('#login-form [name=password]').input_value()=='','password retained')
+                          expect(not ext and not errors,'external request or page error');expect(p.evaluate('qaLogin.writes')==0)
+                          if w==390:p.screenshot(path=str(OUT/f'{engine}_disabled_mobile.png'))
+                      finally:ctx.close()
+                  record(f'{engine}: disabled login {width}x{height}',layout)
+              for scenario,heading in [('wrong','No se pudo iniciar sesión'),('network','No se pudo conectar'),('unconfirmed','Correo sin confirmar'),('rate','Demasiados intentos')]:
+                  def failure(s=scenario,h=heading):
+                      ctx,p,ext,errors=page_for(scenario=s)
+                      try:submit(p);expect(h in p.locator('#login-feedback').inner_text());expect(not ext and not errors);expect(p.evaluate('qaLogin.writes')==0)
+                      finally:ctx.close()
+                  record(f'{engine}: {scenario} message',failure)
+              def persistence():
+                  ctx,p,ext,errors=page_for()
+                  try:
+                      submit(p);before=p.locator('#login-feedback').inner_text();p.wait_for_timeout(6600)
+                      expect(p.locator('#login-feedback').is_visible());expect(p.locator('#login-feedback').inner_text()==before);expect(p.locator('.toast').count()==0,'login still relies on toast')
+                  finally:ctx.close()
+              record(f'{engine}: notice remains after old 6-second timeout',persistence)
+              def restored():
+                  ctx,p,ext,errors=page_for(session=True)
+                  try:
+                      p.locator('#login-feedback:not([hidden])').wait_for();expect('Cuenta no habilitada' in p.locator('#login-feedback').inner_text());expect(p.locator('.shell').count()==0);expect(not ext and not errors)
+                  finally:ctx.close()
+              record(f'{engine}: revoked saved session on reload',restored)
+              def revoke_and_recover():
+                  ctx,p,ext,errors=page_for(scenario='active',session=False)
+                  try:
+                      p.locator('[name=user]').fill('VIEW-QA001');p.locator('[name=password]').fill('fixture');p.locator('#login-form [type=submit]').click()
+                      p.get_by_text('Acceso a resultados pendiente',exact=True).wait_for();expect(p.locator('[data-screen=settings]').count()==0)
+                      p.evaluate("qaLogin.scenario='disabled';document.dispatchEvent(new Event('visibilitychange'))")
+                      p.locator('#login-feedback:not([hidden])').wait_for();expect(p.locator('.shell').count()==0)
+                      p.evaluate("qaLogin.scenario='active'");p.locator('[name=password]').fill('fixture');p.locator('#login-form [type=submit]').click()
+                      p.get_by_text('Acceso a resultados pendiente',exact=True).wait_for();expect(p.locator('#login-feedback').count()==0);expect(not ext and not errors);expect(p.evaluate('qaLogin.writes')==0)
+                  finally:ctx.close()
+              record(f'{engine}: background revocation and successful retry clears notice',revoke_and_recover)
+              def outbox():
+                  ctx,p,ext,errors=page_for()
+                  try:
+                      p.evaluate("async()=>{const s=new PulsoCore.Store();await s.open();await s.put('outbox',{id:'qa-local-only',owner:'qa-browser-user',environment:'https://qa-only.example.invalid',event:{captured_at:'2026-09-23T00:00:00Z'},status:'pending'});}")
+                      submit(p);expect(p.evaluate("async()=>{const s=new PulsoCore.Store();return !!(await s.get('outbox','qa-local-only'));}"))
+                      p.reload();p.locator('#login-form').wait_for();expect(p.evaluate("async()=>{const s=new PulsoCore.Store();return !!(await s.get('outbox','qa-local-only'));}"))
+                  finally:ctx.close()
+              record(f'{engine}: rejection preserves IndexedDB outbox across reload',outbox)
+              def short_height():
+                  ctx,p,ext,errors=page_for(390,390)
+                  try:
+                      submit(p);r=p.locator('#login-feedback h3').bounding_box();expect(r['y']>=0 and r['y']+r['height']<390)
+                      p.set_viewport_size({'width':390,'height':844});p.wait_for_timeout(150);expect(p.locator('#login-feedback').is_visible());expect(not ext and not errors)
+                  finally:ctx.close()
+              record(f'{engine}: short visual area then resize (not native keyboard)',short_height)
+              def toast():
+                  ctx,p,ext,errors=page_for(320,640)
+                  try:
+                      p.evaluate("()=>{const n=document.createElement('div');n.className='toast error';n.textContent='Aviso de prueba: mensaje completo sin recortes.';document.querySelector('#toast-root').append(n);}")
+                      r=p.locator('.toast').bounding_box();expect(r['x']>=0 and r['x']+r['width']<=320,'toast still clipped')
+                  finally:ctx.close()
+              record(f'{engine}: mobile floating toast stays inside screen',toast);browser.close()
+          server.shutdown()
+          summary={'scope':'Real Chromium/WebKit and IndexedDB; mocked Auth/RPC; all external network blocked. No production login or writes. Short viewport is not native iOS keyboard testing.','tests':results,'passed':sum(x['pass'] for x in results),'total':len(results)}
+          (OUT/'login_mobile_results.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
+          if any(not x['pass'] for x in results):raise SystemExit(1)
+          PY
+      - name: Run source and message regression tests
+        run: |
+          mkdir -p login-test-results
+          node --check web/app.js
+          node --check web/core.js
+          node --check web/sw.js
+          node --test tests/*.cjs | tee login-test-results/unit.log
+          python tests/import_package_test.py
+      - name: Install isolated browser test engines
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Verify mobile visibility and revocation flow
+        env:
+          LOGIN_BROWSERS: chromium,webkit
+        run: python tests/login-mobile.py
+      - name: Store browser evidence even on test failure
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pulso-mobile-login-L2-evidence
+          path: login-test-results/
+          retention-days: 14
+      - name: Commit only tested frontend changes
+        run: |
+          git add -- web/app.js web/styles.css web/sw.js tests/login-feedback.test.cjs tests/login-mobile.py tests/fixtures/login-sdk.js
+          git diff --cached --stat
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m '修正手機登入常駐訊息與通知框偏移；保留停用防護及待傳資料'
+          git push origin HEAD:main
+          echo 'L2 UI tested; no Auth/RPC production requests or database changes. Real iPhone keyboard still requires user confirmation.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish through existing Pages workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
