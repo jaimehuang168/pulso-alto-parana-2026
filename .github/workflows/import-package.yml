@@ -22,7 +22,7 @@ jobs:
       - name: Verify package before adding any source files
         env:
           PACKAGE_PATH: Pulso_v2_Deploy_ZH_ES.zip
-          PACKAGE_SHA256: 4f4652f00008d44e45cae888fe4787b7818f41d982f7c04631fbe736b15998f0
+          PACKAGE_SHA256: 342bb711dbd1a98357aa3181742abbbaaee6b4dcdc322486b014ddd5a96d3ce3
         run: python scripts/import-package.py
       - name: Validate imported source
         run: |
