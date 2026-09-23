@@ -1,0 +1,81 @@
+name: Deploy Pulso frontend
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '*.zip'
+      - '.github/workflows/import-package.yml'
+  workflow_dispatch:
+  workflow_run:
+    workflows: ['Import Pulso package']
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check source and public configuration
+        id: check
+        env:
+          PROJECT_URL: ${{ vars.SUPABASE_URL }}
+          PUBLIC_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+        shell: bash
+        run: |
+          if [ ! -f web/app.js ] || [ ! -f tests/core.test.cjs ]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo '## 原始碼尚未匯入：請上傳指定版本的完整 ZIP。尚未部署網站。' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node --check web/app.js
+          node --check web/core.js
+          node --check scripts/continue-deploy-zh.mjs
+          node --test tests/*.cjs
+          python tests/import_package_test.py
+          if [ -z "$PROJECT_URL" ] || [ -z "$PUBLIC_KEY" ]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo '## 程式檢查通過，但尚未部署網站。' >> "$GITHUB_STEP_SUMMARY"
+            echo '請設定 SUPABASE_URL、SUPABASE_PUBLISHABLE_KEY，並在 Settings → Pages 選 GitHub Actions；再執行 Run workflow。' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare private-login frontend
+        if: steps.check.outputs.ready == 'true'
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+        run: node scripts/prepare-web.mjs
+      - uses: actions/configure-pages@v5
+        if: steps.check.outputs.ready == 'true'
+      - uses: actions/upload-pages-artifact@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          path: web
+  deploy:
+    if: needs.build.outputs.ready == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish frontend
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Report deployment boundary
+        run: echo '前端發布完成；Supabase 安裝、帳號權限及多人手機驗收仍須另外確認。' >> "$GITHUB_STEP_SUMMARY"

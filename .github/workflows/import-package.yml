@@ -1,0 +1,47 @@
+name: Import Pulso package
+on:
+  push:
+    branches: [main]
+    paths: ['Pulso_v2_Deploy_ZH_ES.zip']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: source-import
+  cancel-in-progress: false
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify package before adding any source files
+        env:
+          PACKAGE_PATH: Pulso_v2_Deploy_ZH_ES.zip
+          PACKAGE_SHA256: 4f4652f00008d44e45cae888fe4787b7818f41d982f7c04631fbe736b15998f0
+        run: python scripts/import-package.py
+      - name: Validate imported source
+        run: |
+          node --check web/app.js
+          node --check web/core.js
+          node --check scripts/continue-deploy-zh.mjs
+          node --test tests/*.cjs
+          python tests/import_package_test.py
+      - name: Commit verified source without replacing existing work
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- web supabase scripts tests docs .gitignore .env.example AGENTS.md README.md THIRD_PARTY.md
+          if git diff --cached --quiet; then
+            echo '原始碼已存在且一致，沒有新增提交。' >> "$GITHUB_STEP_SUMMARY"
+          else
+            git commit -m '匯入已驗證的 Pulso v2 程式、西文手冊與繁中部署工具'
+            git push origin HEAD:main
+            echo '完整原始碼已提交到 main。' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '注意：原始碼匯入不是正式上線。後續仍須設定 Supabase、Pages 並完成實機驗收。' >> "$GITHUB_STEP_SUMMARY"
