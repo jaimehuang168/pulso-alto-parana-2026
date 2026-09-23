@@ -1,0 +1,230 @@
+name: Pulso readiness audit
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/readiness-audit.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-isolated-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Source unit tests
+        run: |
+          node --check web/app.js
+          node --check web/core.js
+          node --test tests/*.cjs
+          python tests/import_package_test.py
+      - name: Install isolated test client
+        run: python -m pip install --disable-pip-version-check psycopg2-binary==2.9.10
+      - name: Database role and concurrency audit
+        shell: bash
+        run: |
+          mkdir -p audit-results
+          cat > "$RUNNER_TEMP/audit.py" <<'PY'
+          import json,uuid,time,statistics,concurrent.futures
+          from pathlib import Path
+          from datetime import datetime,timedelta,timezone
+          import psycopg2
+          from psycopg2.extras import Json
+          DSN='host=127.0.0.1 port=5432 dbname=postgres user=postgres password=ci-isolated-only'
+          results=[]
+          def owner(sql,args=None):
+            with psycopg2.connect(DSN) as c:
+              with c.cursor() as q:
+                q.execute(sql,args)
+                return q.fetchall() if q.description else None
+          def call(uid,sql,args=None,role='authenticated'):
+            with psycopg2.connect(DSN) as c:
+              with c.cursor() as q:
+                q.execute('set local role '+role)
+                q.execute("select set_config('request.jwt.claim.sub',%s,true)",(uid or '',))
+                q.execute(sql,args)
+                return q.fetchall() if q.description else None
+          def check(name,fn):
+            try:
+              value=fn()
+              if value is False: raise AssertionError('assertion false')
+              results.append({'name':name,'pass':True})
+            except Exception as e:
+              results.append({'name':name,'pass':False,'error':str(e)[:400]})
+            print(json.dumps(results[-1],ensure_ascii=False))
+          def deny(uid,sql,args=None,code='42501',role='authenticated'):
+            try: call(uid,sql,args,role)
+            except psycopg2.Error as e: return e.pgcode==code
+            return False
+          owner("create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls; create schema auth; create table auth.users(id uuid primary key,email text); create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$; grant usage on schema auth to anon,authenticated,service_role; create publication supabase_realtime;")
+          owner(Path('supabase/00_INSTALL_NEW_PROJECT.sql').read_text())
+          check('fresh install 4 cities 12 candidates zero observations',lambda:owner('select (select count(*) from public.districts),(select count(*) from public.candidates),(select count(*) from public.responses)')[0]==(4,12,0))
+          check('8 tables RLS enabled',lambda:owner("select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity")[0][0]==8)
+          admin=str(uuid.uuid4());viewer=str(uuid.uuid4());viewer_city=str(uuid.uuid4());unassigned=str(uuid.uuid4())
+          for uid in [admin,viewer,viewer_city,unassigned]:owner('insert into auth.users values(%s,%s)',(uid,uid+'@example.invalid'))
+          owner("insert into public.profiles(id,code,role) values(%s,'COORD-01','admin'),(%s,'VIEW-ALL','viewer');insert into public.profiles(id,code,role,district_id) values(%s,'VIEW-CDE','viewer','cde')",(admin,viewer,viewer_city))
+          # All following mutations affect ONLY the disposable CI database.
+          owner("update public.stations set is_template=false,address='CI ONLY - fictitious location',point_label='CI ONLY',code=id::text;update public.candidates set name='TEST '+id::text;update public.settings set fieldwork_date=(clock_timestamp() at time zone 'America/Asuncion')::date,catalog_confirmed=true,methodology='CI isolated data - not actual fieldwork';")
+          agents=[]
+          for d,code in [('cde','CDE'),('minga','MGA'),('hernandarias','HER'),('franco','PFR')]:
+            stations=[r[0] for r in owner('select id from public.stations where district_id=%s order by id',(d,))]
+            candidate=owner('select id from public.candidates where district_id=%s order by sort_order limit 1',(d,))[0][0]
+            for slot in range(1,16):
+              uid=str(uuid.uuid4());st=str(stations[(slot-1)%len(stations)])
+              owner('insert into auth.users values(%s,%s)',(uid,uid+'@example.invalid'))
+              owner("insert into public.profiles(id,code,role,district_id,station_id,slot) values(%s,%s,'interviewer',%s,%s,%s)",(uid,f'{code}-{slot:02}',d,st,slot))
+              agents.append({'uid':uid,'district':d,'station':st,'candidate':str(candidate)})
+          a=agents[0];other=agents[15]
+          def event(agent=a,**changes):
+            now=datetime.now(timezone.utc)
+            e={'id':str(uuid.uuid4()),'station_id':agent['station'],'outcome':'refused','candidate_id':None,'already_voted':True,'consent':False,'started_at':(now-timedelta(seconds=2)).isoformat(),'captured_at':now.isoformat(),'geo_status':'not_requested'}
+            e.update(changes);return e
+          submit='select public.submit_response_v2(%s)'
+          check('anonymous bootstrap denied',lambda:deny(None,'select public.bootstrap()',role='anon'))
+          check('unassigned authenticated user denied',lambda:deny(unassigned,'select public.bootstrap()'))
+          for table in ['districts','settings','candidates','stations','profiles','responses','audit_log','district_signals']:
+            check('anonymous table denied: '+table,lambda table=table:deny(None,'select * from public.'+table,role='anon'))
+          check('interviewer cannot self-promote',lambda:deny(a['uid'],"update public.profiles set role='admin' where id=%s",(a['uid'],)))
+          check('interviewer cannot read team',lambda:deny(a['uid'],'select public.list_accounts_v2()'))
+          check('viewer cannot read raw records',lambda:deny(viewer,'select public.get_records_v2()'))
+          check('viewer locked by default',lambda:deny(viewer,'select public.get_dashboard_v2()'))
+          check('admin can bootstrap four cities',lambda:len(call(admin,'select public.bootstrap()')[0][0]['districts'])==4)
+          check('setup phase rejects capture',lambda:deny(a['uid'],submit,(Json(event()),),code='P0001'))
+          call(admin,"select public.set_fieldwork_state('open')")
+          check('admin cannot submit survey',lambda:deny(admin,submit,(Json(event()),)))
+          check('viewer cannot submit survey',lambda:deny(viewer,submit,(Json(event()),)))
+          check('foreign station denied',lambda:deny(a['uid'],submit,(Json(event(station_id=other['station'])),),code='23514'))
+          check('foreign candidate denied',lambda:deny(a['uid'],submit,(Json(event(outcome='candidate',consent=True,candidate_id=other['candidate'])),),code='23514'))
+          check('consent mismatch denied',lambda:deny(a['uid'],submit,(Json(event(outcome='blank',consent=False)),),code='23514'))
+          check('not yet voted denied',lambda:deny(a['uid'],submit,(Json(event(already_voted=False)),),code='23514'))
+          check('unapproved GPS denied',lambda:deny(a['uid'],submit,(Json(event(latitude=-25.5,longitude=-54.6)),),code='23514'))
+          check('future capture denied',lambda:deny(a['uid'],submit,(Json(event(captured_at=(datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat())),),code='23514'))
+          legacy='select public.submit_response(%s,%s,%s,%s,%s,%s,%s)'
+          check('legacy submit bypass denied',lambda:deny(a['uid'],legacy,(str(uuid.uuid4()),a['station'],'refused',None,datetime.now(timezone.utc),False,True)))
+          e=event();call(a['uid'],submit,(Json(e),))
+          check('exact retry returns same UUID',lambda:str(call(a['uid'],submit,(Json(e),))[0][0])==e['id'])
+          check('retry counted once',lambda:owner('select count(*) from public.responses where id=%s',(e['id'],))[0][0]==1)
+          check('changed UUID payload denied',lambda:deny(a['uid'],submit,(Json(dict(e,outcome='blank',consent=True)),),code='23514'))
+          check('other agent UUID replay denied',lambda:deny(other['uid'],submit,(Json(e),),code='23514'))
+          check('interviewer cross-user journal denied',lambda:deny(a['uid'],'select public.get_records_v2(p_agent_id=>%s)',(other['uid'],)))
+          check('interviewer cannot see other rows',lambda:call(other['uid'],'select count(*) from public.responses')[0][0]==0)
+          call(admin,'select public.set_viewer_access(true)')
+          v=call(viewer_city,'select public.get_dashboard_v2()')[0][0]
+          check('city viewer one city only',lambda:len(v['districts'])==1 and v['districts'][0]['id']=='cde')
+          check('viewer dashboard no agent records',lambda:all(d['agents']==[] for d in v['districts']))
+          check('viewer cannot enable access',lambda:deny(viewer,'select public.set_viewer_access(false)'))
+          check('viewer cannot read foreign station',lambda:deny(viewer_city,'select public.get_dashboard_v2(%s)',(other['station'],)))
+          check('cannot change assignment after opening',lambda:deny(admin,'select public.set_assignment(%s,%s)',(a['uid'],other['station']),code='P0001'))
+          call(admin,'select public.set_account_active(%s,false)',(other['uid'],))
+          check('disabled user denied immediately',lambda:deny(other['uid'],submit,(Json(event(other)),)))
+          call(admin,'select public.set_account_active(%s,true)',(other['uid'],))
+          before=owner('select count(*) from public.responses')[0][0]
+          def load(agent):
+            timings=[]
+            for n in range(10):
+              record=event(agent);t=time.perf_counter();call(agent['uid'],submit,(Json(record),));timings.append((time.perf_counter()-t)*1000)
+            return timings
+          started=time.perf_counter()
+          with concurrent.futures.ThreadPoolExecutor(max_workers=60) as pool:
+            batches=list(pool.map(load,agents))
+          elapsed=time.perf_counter()-started;times=sorted(x for b in batches for x in b)
+          check('60 concurrent workers: exactly 600 records added',lambda:owner('select count(*) from public.responses')[0][0]-before==600)
+          check('every agent has 10 load-test responses',lambda:owner('select min(n) from (select count(*) n from public.responses group by agent_id) x')[0][0]>=10)
+          dash=call(admin,'select public.get_dashboard_v2()')[0][0]
+          check('dashboard totals reconcile database',lambda:sum(d['total'] for d in dash['districts'])==before+600)
+          check('station totals reconcile cities',lambda:all(sum(st['count'] for st in d['stations'])==d['total'] for d in dash['districts']))
+          check('agent totals reconcile cities',lambda:all(sum(st['count'] for st in d['agents'])==d['total'] for d in dash['districts']))
+          check('hour totals reconcile cities',lambda:all(sum(h['count'] for h in d['hours'])==d['total'] and sum(h['count'] for h in d['capture_hours'])==d['total'] for d in dash['districts']))
+          call(a['uid'],'select public.void_response(%s)',(e['id'],))
+          check('void excludes count and retains audit',lambda:call(a['uid'],'select public.my_activity()')[0][0]['total']==10 and owner("select count(*) from public.audit_log where action='capture_voided'")[0][0]==1)
+          pending=event();time.sleep(0.01);call(admin,"select public.set_fieldwork_state('closed')")
+          check('eligible pre-close pending accepted',lambda:str(call(a['uid'],submit,(Json(pending),))[0][0])==pending['id'])
+          check('new post-close event denied',lambda:deny(a['uid'],submit,(Json(event()),),code='23514'))
+          summary={'scope':'isolated PostgreSQL 17; auth.uid and auth.users test doubles; not live Auth/Realtime','source_commit':'4aa91128dbda600ebc36248e4ed3f2fb30be8baa','tests':results,'load':{'workers':60,'records':600,'elapsed_s':round(elapsed,3),'p50_ms':round(statistics.median(times),2),'p95_ms':round(times[int(len(times)*.95)-1],2),'max_ms':round(max(times),2)}}
+          Path('audit-results/database.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
+          print('AUDIT_DB_SUMMARY '+json.dumps(summary,ensure_ascii=False))
+          PY
+          python "$RUNNER_TEMP/audit.py"
+      - name: Live read-only unauthenticated probes
+        if: always()
+        env:
+          SB_URL: ${{ vars.SUPABASE_URL }}
+          PUBLIC_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+        shell: bash
+        run: |
+          mkdir -p audit-results
+          python - <<'PY'
+          import json,os,urllib.request,urllib.error,re,time
+          from pathlib import Path
+          base='https://jaimehuang168.github.io/pulso-alto-parana-2026/'
+          sb=os.environ.get('SB_URL','').rstrip('/');key=os.environ.get('PUBLIC_KEY','')
+          results=[]
+          def request(url,method='GET',body=None,headers=None):
+            try:
+              with urllib.request.urlopen(urllib.request.Request(url,data=body,method=method,headers=headers or {}),timeout=20) as r:return r.status,r.read(),dict(r.headers)
+            except urllib.error.HTTPError as e:return e.code,e.read(),dict(e.headers)
+            except Exception as e:return 0,b'',{}
+          for path in ['','app.js','core.js','styles.css','config.js','sw.js','supabase-vendor.js','manual-es.html','guia-encuestador-es.html','manifest.webmanifest','icon-192.png','icon-512.png']:
+            status,data,h=request(base+path);results.append({'name':'public asset '+(path or 'index'),'pass':status==200 and len(data)>0,'status':status,'bytes':len(data)})
+            if path=='config.js':
+              text=data.decode(errors='replace');results.append({'name':'deployed config no secret key','pass':'sb_secret_' not in text and 'service_role' not in text})
+          headers={'apikey':key,'Content-Type':'application/json','Origin':'https://jaimehuang168.github.io'}
+          if sb and key.startswith('sb_publishable_'):
+            status,data,h=request(sb+'/auth/v1/settings',headers=headers)
+            try: settings=json.loads(data)
+            except: settings={}
+            results.append({'name':'Auth endpoint accessible','pass':status==200,'status':status})
+            results.append({'name':'public signup disabled','pass':settings.get('disable_signup') is True,'actual':settings.get('disable_signup')})
+            results.append({'name':'anonymous sign-ins disabled','pass':settings.get('external',{}).get('anonymous_users') is not True})
+            for table in ['districts','settings','candidates','stations','profiles','responses','audit_log','district_signals']:
+              status,data,h=request(sb+'/rest/v1/'+table+'?select=*&limit=1',headers=headers)
+              results.append({'name':'live anonymous table denied '+table,'pass':status in [401,403],'status':status})
+            for rpc in ['bootstrap','get_dashboard_v2','list_accounts_v2','get_records_v2']:
+              status,data,h=request(sb+'/rest/v1/rpc/'+rpc,'POST',b'{}',headers)
+              results.append({'name':'live anonymous RPC denied '+rpc,'pass':status in [401,403],'status':status})
+            status,data,h=request(sb+'/functions/v1/provision-team','OPTIONS',None,{**headers,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,apikey,content-type'})
+            results.append({'name':'provision-team exists and CORS correct','pass':status==204 and any(k.lower()=='access-control-allow-origin' and v=='https://jaimehuang168.github.io' for k,v in h.items()),'status':status})
+            status,data,h=request(sb+'/functions/v1/provision-team','POST',b'{"action":"audit-no-write"}',headers)
+            results.append({'name':'provision-team unauthenticated denied','pass':status in [401,403],'status':status})
+          else:results.append({'name':'live settings available','pass':False,'status':'not configured'})
+          Path('audit-results/live.json').write_text(json.dumps({'tests':results,'scope':'unauthenticated/read-only only; no logins, no production writes, no payload contents logged'},ensure_ascii=False,indent=2))
+          print('AUDIT_LIVE_SUMMARY '+json.dumps(results,ensure_ascii=False))
+          PY
+      - name: Store evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pulso-readiness-evidence
+          path: audit-results/
+          retention-days: 14
+      - name: Report verdict
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          errors=[]
+          for name in ['database','live']:
+            p=Path('audit-results')/(name+'.json')
+            if not p.exists():errors.append(name+': missing evidence');continue
+            r=json.loads(p.read_text());tests=r['tests'];failed=[t['name'] for t in tests if not t['pass']]
+            print(name, 'passed',len(tests)-len(failed),'total',len(tests),'failed',failed);errors+=failed
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+            f.write('## Pulso 上線前檢查\n正式庫無新增問卷或帳號；資料庫負載使用一次性 CI 容器。\n')
+            f.write('失敗項目：'+json.dumps(errors,ensure_ascii=False)+'\n')
+            f.write('即使本流程全過，仍需正式登入、Edge Function 三角色、WebSocket、實機離線及備份復原驗收。\n')
+          if errors:raise SystemExit(1)
+          PY
