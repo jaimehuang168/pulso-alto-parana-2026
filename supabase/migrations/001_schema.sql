@@ -268,7 +268,7 @@ as $$declare s public.settings; begin
  sample_interval=(p_settings->>'sample_interval')::integer,goal_per_district=(p_settings->>'goal_per_district')::integer,
  methodology=btrim(p_settings->>'methodology'),catalog_confirmed=coalesce((p_settings->>'catalog_confirmed')::boolean,false),updated_at=clock_timestamp() where id=1;
  insert into public.audit_log(actor_id,action) values(auth.uid(),'settings_saved');
- update public.district_signals set version=version+1,changed_at=clock_timestamp();
+ update public.district_signals set version=version+1,changed_at=clock_timestamp() where district_id in (select id from public.districts);
  end$$;
 
 create function public.save_catalog(p_district_id text,p_candidates jsonb,p_stations jsonb) returns void
@@ -325,7 +325,7 @@ as $$declare s public.settings; begin
    update public.settings set state='closed',closed_at=clock_timestamp(),updated_at=clock_timestamp() where id=1;
  else raise exception 'Transición de estado no permitida.' using errcode='23514'; end if;
  insert into public.audit_log(actor_id,action,detail) values(auth.uid(),'fieldwork_state_changed',jsonb_build_object('state',p_state));
- update public.district_signals set version=version+1,changed_at=clock_timestamp();
+ update public.district_signals set version=version+1,changed_at=clock_timestamp() where district_id in (select id from public.districts);
  end$$;
 
 create function public.set_assignment(p_user_id uuid,p_station_id uuid) returns void
@@ -347,7 +347,7 @@ as $$begin
  update public.profiles set active=p_active where id=p_user_id and role in ('interviewer','supervisor');
  if not found then raise exception 'Puesto no encontrado o protegido.' using errcode='P0001'; end if;
  insert into public.audit_log(actor_id,action,subject_id,detail) values(auth.uid(),'account_access_changed',p_user_id,jsonb_build_object('active',p_active));
- update public.district_signals set version=version+1,changed_at=clock_timestamp();
+ update public.district_signals set version=version+1,changed_at=clock_timestamp() where district_id in (select id from public.districts);
  end$$;
 create function public.log_export(p_kind text) returns void
 language plpgsql security definer set search_path=''

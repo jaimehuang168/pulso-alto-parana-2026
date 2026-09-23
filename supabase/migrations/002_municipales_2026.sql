@@ -43,7 +43,7 @@ create index responses_captured_v2 on public.responses(district_id,station_id,ca
 create index responses_journal_v2 on public.responses(received_at desc,id desc);
 
 -- Catalogue supplied by the operator on 22 September 2026. Not certified by TSJE.
-delete from public.candidates;
+delete from public.candidates where district_id in (select id from public.districts);
 insert into public.candidates(district_id,name,list_label,sort_order,is_template) values
 ('cde','Rigo Chamorro','Lista 1',0,false),('cde','Dani Mujica','Lista 123',1,false),
 ('hernandarias','Oscar “Melli” González','Lista 1',0,false),('hernandarias','José Castillo','Lista 2026',1,false),
@@ -51,7 +51,7 @@ insert into public.candidates(district_id,name,list_label,sort_order,is_template
 ('minga','Roberto Almiron','Lista 6',2,false),('minga','Tania Mabel Meza','Lista 44',3,false),
 ('franco','Arnold Ramírez','Lista 1',0,false),('franco','Roya Torres','Lista 2',1,false),
 ('franco','Henry González','Lista 3',2,false),('franco','Mabel Otazú','Lista 123',3,false);
-update public.settings set title='Municipales 2026 · Alto Paraná',contest='Intendencia municipal',fieldwork_date='2026-10-04',catalog_confirmed=false;
+update public.settings set title='Municipales 2026 · Alto Paraná',contest='Intendencia municipal',fieldwork_date='2026-10-04',catalog_confirmed=false where id=1;
 -- Existing sample stations MUST be replaced/renamed with verified real data.
 
 create or replace function app_private.has_access_to(d text) returns boolean
@@ -157,7 +157,7 @@ create function public.set_viewer_access(p_enabled boolean) returns void languag
  if p_enabled is null then raise exception 'Valor inválido.' using errcode='23514';end if;
  update public.settings set viewer_enabled=p_enabled,updated_at=clock_timestamp() where id=1;
  insert into public.audit_log(actor_id,action,detail) values(auth.uid(),'viewer_access_changed',jsonb_build_object('enabled',p_enabled));
- update public.district_signals set version=version+1,changed_at=clock_timestamp();
+ update public.district_signals set version=version+1,changed_at=clock_timestamp() where district_id in (select id from public.districts);
 end$$;
 create function public.set_operator_label(p_user_id uuid,p_name text) returns void language plpgsql security definer set search_path='' as $$begin
  if not app_private.is_admin() then raise exception 'Solo administración.' using errcode='42501';end if;
@@ -172,7 +172,7 @@ language plpgsql security definer set search_path='' as $$begin
  update public.profiles set active=p_active where id=p_user_id and role in ('interviewer','viewer');
  if not found then raise exception 'Cuenta no encontrada o protegida.' using errcode='P0001';end if;
  insert into public.audit_log(actor_id,action,subject_id,detail) values(auth.uid(),'account_access_changed',p_user_id,jsonb_build_object('active',p_active));
- update public.district_signals set version=version+1,changed_at=clock_timestamp();
+ update public.district_signals set version=version+1,changed_at=clock_timestamp() where district_id in (select id from public.districts);
 end$$;
 
 create or replace function public.save_catalog(p_district_id text,p_candidates jsonb,p_stations jsonb) returns void
