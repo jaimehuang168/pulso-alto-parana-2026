@@ -246,7 +246,7 @@ as $$declare p public.profiles; result jsonb; begin
  cc as (select candidate_id,count(*) n from rr where outcome='candidate' group by candidate_id),
  ac as (select agent_id,count(*) n,max(received_at) last_received from rr group by agent_id),
  sc as (select station_id,count(*) n from rr group by station_id),
- hc as (select district_id,date_trunc('hour',received_at) hour,count(*) n from rr group by district_id,date_trunc('hour',received_at))
+ hc as (select district_id,date_trunc('hour',received_at) AS hour,count(*) n from rr group by district_id,date_trunc('hour',received_at))
  select jsonb_build_object('generated_at',statement_timestamp(),'settings',(select to_jsonb(s) from public.settings s where id=1),
  'districts',coalesce((select jsonb_agg(jsonb_build_object('id',d.id,'code',d.code,'name',d.name,'target_agents',15,
  'total',coalesce(dc.total,0),'answered',coalesce(dc.answered,0),'valid',coalesce(dc.valid,0),'blank',coalesce(dc.blank,0),'invalid',coalesce(dc.invalid,0),'undisclosed',coalesce(dc.undisclosed,0),'refused',coalesce(dc.refused,0),
