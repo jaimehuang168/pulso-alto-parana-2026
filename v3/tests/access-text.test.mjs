@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{credentialText}from'../web/modules/core.mjs';
+test('Private text retains exact generated password without spreadsheet prefixes',()=>{for(const password of ['-abc_0123456789abc','+abc_0123456789abc','  valid long passphrase  ','=not_a_formula_here'])assert(credentialText({code:'VIEW-QA',password}).includes('Contraseña: '+password+'\n'));});
+test('Private credential text rejects line injection',()=>{assert.throws(()=>credentialText({code:'VIEW-QA\nADMIN',password:'valid-password-long'}),/INVALID_CREDENTIAL/);assert.throws(()=>credentialText({code:'VIEW-QA',password:'secret\r\nOTHER'}),/INVALID_CREDENTIAL/);});
