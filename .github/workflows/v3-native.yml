@@ -1,0 +1,102 @@
+name: V3 native full-stack verification
+on:
+  push:
+    branches: ['v3/field-operations']
+    paths: ['v3/**','supabase/**','.github/workflows/v3-native.yml']
+  pull_request:
+    branches: [main]
+    paths: ['v3/**','supabase/**','.github/workflows/v3-native.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v3-native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      LOCAL_STATUS_FILE: /tmp/pulso-v3-local-status.json
+      SUPABASE_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Install pinned application and local CLI dependencies
+        run: |
+          npm --prefix v3 install
+          mkdir -p /tmp/pulso-v3-cli
+          npm --prefix /tmp/pulso-v3-cli install --save-exact supabase@2.117.0
+          echo '/tmp/pulso-v3-cli/node_modules/.bin' >> "$GITHUB_PATH"
+          mkdir -p v3/evidence
+      - name: Create disposable local backend, never a linked project
+        run: |
+          mkdir -p /tmp/pulso-v3-local
+          supabase init --workdir /tmp/pulso-v3-local --yes
+          node v3/tests/prepare-local.mjs /tmp/pulso-v3-local
+          python - <<'PY'
+          import pathlib,re
+          p=pathlib.Path('/tmp/pulso-v3-local/supabase/config.toml')
+          p.write_text(re.sub(r'^enable_signup\s*=.*$', 'enable_signup = false',p.read_text(),flags=re.M))
+          PY
+          supabase start --workdir /tmp/pulso-v3-local --exclude studio,imgproxy,logflare,vector,supavisor,postgres-meta,mailpit > /tmp/pulso-v3-start.log 2>&1
+          supabase status --workdir /tmp/pulso-v3-local --output json > "$LOCAL_STATUS_FILE"
+          node - <<'JS'
+          const s=require(process.env.LOCAL_STATUS_FILE);
+          for(const k of ['ANON_KEY','SERVICE_ROLE_KEY','JWT_SECRET','PUBLISHABLE_KEY','SECRET_KEY'])if(s[k])console.log('::add-mask::'+s[k]);
+          console.log('Disposable local stack started. No production URL or credentials used.');
+          JS
+      - name: Serve field-enrollment in the real local Edge runtime
+        run: |
+          printf 'PULSO_V3_ORIGINS=http://127.0.0.1:8044\nAPP_ORIGIN=http://127.0.0.1:8044\n' > /tmp/pulso-v3-edge.env
+          supabase functions serve field-enrollment --workdir /tmp/pulso-v3-local --env-file /tmp/pulso-v3-edge.env > /tmp/pulso-v3-edge.log 2>&1 &
+          echo $! > /tmp/pulso-v3-edge.pid
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: http://127.0.0.1:8044' http://127.0.0.1:54321/functions/v1/field-enrollment || true)
+            if [ "$code" = 204 ]; then exit 0; fi
+            sleep 2
+          done
+          echo 'Local Edge did not become ready; do not treat this as a passed test.'
+          exit 1
+      - name: Native authentication and backend integration
+        run: node v3/tests/native.mjs
+      - name: Build local-only browser clients
+        run: |
+          node v3/scripts/fetch-vendor.mjs
+          node v3/scripts/build.mjs --demo
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';import{spawnSync}from'node:child_process';
+          const s=JSON.parse(fs.readFileSync(process.env.LOCAL_STATUS_FILE));
+          const r=spawnSync(process.execPath,['v3/scripts/build.mjs'],{stdio:'inherit',env:{...process.env,SUPABASE_URL:s.API_URL,SUPABASE_PUBLISHABLE_KEY:s.ANON_KEY,PULSO_ENVIRONMENT:'disposable-native-ci'}});
+          process.exit(r.status??1);
+          JS
+      - name: Install test browser engines
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Native login and actual App form submissions in browsers
+        env:
+          NATIVE_BROWSER_FIXTURE: /tmp/pulso-v3-browser-private.json
+        run: python v3/tests/browser.py
+      - name: Authenticated 60 and 120 user HTTP load and backlog reconciliation
+        run: node v3/tests/load-native.mjs
+      - name: Record source and only sanitized evidence
+        if: always()
+        run: |
+          mkdir -p v3/evidence
+          git rev-parse HEAD > v3/evidence/SOURCE_SHA.txt
+          echo 'Disposable local native Supabase. Not physical phones, not a production capacity guarantee.' > v3/evidence/SCOPE.txt
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-v3-native-evidence
+          path: v3/evidence/
+          retention-days: 7
+      - name: Stop disposable services
+        if: always()
+        run: |
+          if [ -f /tmp/pulso-v3-edge.pid ]; then kill "$(cat /tmp/pulso-v3-edge.pid)" || true; fi
+          if command -v supabase >/dev/null; then supabase stop --workdir /tmp/pulso-v3-local --no-backup || true; fi
+          rm -f /tmp/pulso-v3-browser-private.json /tmp/pulso-v3-local-context.json /tmp/pulso-v3-local-status.json /tmp/pulso-v3-edge.env
