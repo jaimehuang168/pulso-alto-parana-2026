@@ -1,4 +1,4 @@
-"""Reviewed usability corrections and diagnostics; never accesses a remote database."""
+"""Reviewed usability corrections and local integration diagnostics; no remote database."""
 from pathlib import Path
 R=Path(__file__).resolve().parents[2]
 p=R/'v3/web/app.mjs';s=p.read_text()
@@ -16,8 +16,9 @@ if 'aria-busy' not in s:
  s=s.replace('def nav(page,id):','def nav(page,id):\n    page.wait_for_function("document.querySelector(\'#app\')?.getAttribute(\'aria-busy\') !== \'true\'")')
  p.write_text(s)
 p=R/'v3/tests/native.mjs';s=p.read_text()
-needle='scope:\'Boolean permissions only; no tokens or answers\''
-if "subscription_counts" not in s:
- s=s.replace("facts:facts.rows,"+needle,"facts:facts.rows,subscription_counts:(await db.query(\"select count(*) subscriptions,count(*) filter(where claims ? 'session_id') sessions_in_claims,count(*) filter(where claims->>'role'='authenticated') authenticated_subscriptions,count(*) filter(where exists(select 1 from auth.sessions a where a.id::text=claims->>'session_id' and a.user_id::text=claims->>'sub')) existing_sessions from realtime.subscription where entity='public.v3_signals'::regclass\")).rows,"+needle)
+old="await admin.removeChannel(ch);assert(delivered,'Must observe an event, not just SUBSCRIBED');"
+new="""const diagnostic=await db.query("select count(*) subscriptions,count(*) filter(where claims ? 'session_id') sessions_in_claims,count(*) filter(where claims->>'role'='authenticated') authenticated_subscriptions,count(*) filter(where exists(select 1 from auth.sessions a where a.id::text=claims->>'session_id' and a.user_id::text=claims->>'sub')) existing_sessions from realtime.subscription where entity='public.v3_signals'::regclass");await fs.writeFile(new URL('native-realtime-route.json',evidence),JSON.stringify({subscription_counts:diagnostic.rows,received:delivered,scope:'Aggregate counts only; no JWT, names, or answers'}));await admin.removeChannel(ch);assert(delivered,'Must observe an event, not just SUBSCRIBED');"""
+if old in s:
+ assert s.count(old)==1;s=s.replace(old,new)
  p.write_text(s)
-print('UI race conditions and local-only boolean diagnostics prepared.')
+print('UI race conditions and local-only aggregate diagnostics prepared.')
