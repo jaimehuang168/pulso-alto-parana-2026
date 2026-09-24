@@ -7,6 +7,9 @@ on:
 permissions:
   contents: write
   actions: write
+concurrency:
+  group: v3-source-review
+  cancel-in-progress: false
 jobs:
   review:
     runs-on: ubuntu-24.04
@@ -18,10 +21,11 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
-      - name: Prepare reviewed corrections and native assertions
+      - name: Prepare reviewed source and test corrections
         run: |
           python v3/scripts/review-r3.py
           python v3/tests/prepare-realtime-check.py
+          python v3/scripts/prepare-metrics.py
           node v3/scripts/make-upgrade.mjs
       - name: Locked dependencies and regression tests
         run: |
@@ -40,9 +44,9 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- supabase/migrations/005_v3_api.sql supabase/migrations/007_v3_cutover.sql supabase/migrations/008_v3_storage.sql supabase/V3_UPGRADE_EXISTING.sql v3/tests/native.mjs
+          git add -- supabase/migrations/005_v3_api.sql supabase/migrations/007_v3_cutover.sql supabase/migrations/008_v3_storage.sql supabase/V3_UPGRADE_EXISTING.sql v3/tests/native.mjs v3/tests/database.mjs v3/web/modules/views.mjs v3/web/styles.css
           if ! git diff --cached --quiet; then
-            git commit -m '強化原生整合 Realtime 憑證、權限檢查與測試清理'
+            git commit -m '完成反向審查邊界修正、逐點統計與原生測試診斷'
             git push origin HEAD:v3/field-operations
           fi
           gh workflow run v3-native.yml --ref v3/field-operations
