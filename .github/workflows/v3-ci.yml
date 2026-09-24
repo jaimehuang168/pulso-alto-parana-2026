@@ -1,0 +1,57 @@
+name: Pulso V3 isolated verification
+on:
+  push:
+    branches: [feature/v3-field-operations]
+  pull_request:
+    branches: [main]
+    paths: ['v3/**', 'supabase/migrations/00[4-9]*', '.github/workflows/v3-ci.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v3-test-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: isolated-test-only
+          POSTGRES_DB: pulso_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U postgres' --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Preserve source snapshot (no environment or credentials)
+        run: git archive HEAD --format=tar -o /tmp/pulso-source.tar
+      - uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pulso-v3-source
+          path: /tmp/pulso-source.tar
+          retention-days: 7
+      - name: Existing regressions
+        run: node --test tests/*.cjs
+      - name: V3 test entrypoint
+        env:
+          PULSO_TEST_DSN: postgresql://postgres:isolated-test-only@127.0.0.1:5432/pulso_test
+        run: |
+          if [ -f v3/tests/run-ci.sh ]; then
+            bash v3/tests/run-ci.sh
+          else
+            echo 'V3 implementation not present yet; this run verifies baseline only.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-v3-evidence
+          path: v3/evidence/public/
+          if-no-files-found: ignore
+          retention-days: 14
