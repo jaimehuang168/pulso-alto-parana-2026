@@ -37,9 +37,20 @@ jobs:
           supabase init --workdir /tmp/pulso-v3-local --yes
           node v3/tests/prepare-local.mjs /tmp/pulso-v3-local
           python - <<'PY'
-          import pathlib,re
+          import pathlib,re,tomllib
           p=pathlib.Path('/tmp/pulso-v3-local/supabase/config.toml')
-          p.write_text(re.sub(r'^enable_signup\s*=.*$', 'enable_signup = false',p.read_text(),flags=re.M))
+          s=p.read_text()
+          for section,enabled in [('auth',False),('auth.email',True)]:
+            pattern=r'(?ms)(^\['+re.escape(section)+r'\]\s*\n)(.*?)(?=^\[|\Z)'
+            def replace(m):
+              body,n=re.subn(r'(?m)^enable_signup\s*=.*$', 'enable_signup = '+str(enabled).lower(),m[2])
+              assert n==1
+              return m[1]+body
+            s,n=re.subn(pattern,replace,s)
+            assert n==1
+          config=tomllib.loads(s)
+          assert config['auth']['enable_signup'] is False and config['auth']['email']['enable_signup'] is True
+          p.write_text(s)
           PY
           supabase start --workdir /tmp/pulso-v3-local --exclude studio,imgproxy,logflare,vector,supavisor,postgres-meta,mailpit > /tmp/pulso-v3-start.log 2>&1
           supabase status --workdir /tmp/pulso-v3-local --output json > "$LOCAL_STATUS_FILE"
