@@ -2,9 +2,7 @@ name: Deploy Pulso frontend
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '*.zip'
-      - '.github/workflows/import-package.yml'
+    paths-ignore: ['*.zip','.github/workflows/import-package.yml']
   workflow_dispatch:
   workflow_run:
     workflows: ['Import Pulso package']
@@ -12,6 +10,7 @@ on:
     branches: [main]
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 concurrency:
@@ -31,7 +30,7 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
-      - name: Check source and public configuration
+      - name: Check original V2 source and public configuration
         id: check
         env:
           PROJECT_URL: ${{ vars.SUPABASE_URL }}
@@ -40,7 +39,7 @@ jobs:
         run: |
           if [ ! -f web/app.js ] || [ ! -f tests/core.test.cjs ]; then
             echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo '## 原始碼尚未匯入：請上傳指定版本的完整 ZIP。尚未部署網站。' >> "$GITHUB_STEP_SUMMARY"
+            echo '原始 V2 程式不完整；不發布。' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           node --check web/app.js
@@ -50,17 +49,67 @@ jobs:
           python tests/import_package_test.py
           if [ -z "$PROJECT_URL" ] || [ -z "$PUBLIC_KEY" ]; then
             echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo '## 程式檢查通過，但尚未部署網站。' >> "$GITHUB_STEP_SUMMARY"
-            echo '請設定 SUPABASE_URL、SUPABASE_PUBLISHABLE_KEY，並在 Settings → Pages 選 GitHub Actions；再執行 Run workflow。' >> "$GITHUB_STEP_SUMMARY"
+            echo '缺少公開連線設定，不發布。' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           fi
-      - name: Prepare private-login frontend
+      - name: Preserve and prepare original private V2 frontend
         if: steps.check.outputs.ready == 'true'
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
         run: node scripts/prepare-web.mjs
+      - name: Verify exact V3 source passed all native gates
+        if: steps.check.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/35992246330 > /tmp/v3-accepted-run.json
+          python - <<'PY'
+          import json
+          r=json.load(open('/tmp/v3-accepted-run.json'))
+          assert r['head_sha']=='fcb9187f556369a1437af24c96b67cad25e67653'
+          assert r['status']=='completed' and r['conclusion']=='success'
+          PY
+      - uses: actions/checkout@v7.0.1
+        if: steps.check.outputs.ready == 'true'
+        with:
+          ref: fcb9187f556369a1437af24c96b67cad25e67653
+          path: v3-candidate
+          persist-credentials: false
+      - name: Build pinned V3 without modifying the production database
+        if: steps.check.outputs.ready == 'true'
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          PULSO_ENVIRONMENT: hosted-v3-awaiting-owner-activation
+        run: |
+          npm --prefix v3-candidate/v3 ci
+          node v3-candidate/v3/scripts/check.mjs
+          node --test v3-candidate/v3/tests/*.test.mjs
+          node v3-candidate/v3/scripts/fetch-vendor.mjs
+          node v3-candidate/v3/scripts/build.mjs --demo
+          node v3-candidate/v3/scripts/build.mjs
+          mkdir -p web/v3 web/v3-demo /tmp/pulso-v3-release
+          cp -a v3-candidate/v3/dist/. web/v3/
+          cp -a v3-candidate/v3/preview/. web/v3-demo/
+          git -C v3-candidate archive --format=zip HEAD -o /tmp/pulso-v3-release/source.zip
+          git -C v3-candidate rev-parse HEAD > /tmp/pulso-v3-release/SOURCE_SHA.txt
+          tar -C web/v3 -czf /tmp/pulso-v3-release/private-frontend.tar.gz .
+          tar -C web/v3-demo -czf /tmp/pulso-v3-release/isolated-demo.tar.gz .
+          python - <<'PY'
+          import json,pathlib
+          data={'version':'3.0.0-rc.1','source_commit':'fcb9187f556369a1437af24c96b67cad25e67653','native_run':35992246330,'root_v2_preserved':True,'v3_production_database_automatically_migrated':False,'v3_url_requires_owner_install_and_activation':True,'demo_uses_only_browser_local_synthetic_data':True}
+          pathlib.Path('web/v3-release.json').write_text(json.dumps(data,indent=2))
+          pathlib.Path('/tmp/pulso-v3-release/release.json').write_text(json.dumps(data,indent=2))
+          PY
+          echo '原始 V2 根目錄保留。V3 靜態入口不等於正式後端已升級；展示版不连接正式資料庫。' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.0
+        if: steps.check.outputs.ready == 'true'
+        with:
+          name: pulso-v3-delivery-source-and-frontends
+          path: /tmp/pulso-v3-release/
+          retention-days: 14
       - uses: actions/configure-pages@v6.0.0
         if: steps.check.outputs.ready == 'true'
       - uses: actions/upload-pages-artifact@v5.0.0
@@ -75,8 +124,64 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Publish frontend
+      - name: Publish preserved V2 and separate V3 entry points
         id: deployment
         uses: actions/deploy-pages@v5.0.1
       - name: Report deployment boundary
-        run: echo '前端發布完成；Supabase 安裝、帳號權限及多人手機驗收仍須另外確認。' >> "$GITHUB_STEP_SUMMARY"
+        run: echo '前端已發布。正式 Supabase V3 安裝、真實備份與實體手機驗收仍由已授權擁有者完成。' >> "$GITHUB_STEP_SUMMARY"
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Install browser for public deployment verification
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium
+      - name: Verify published routes without logging into production
+        run: |
+          mkdir -p evidence
+          python - <<'PY'
+          import json,time,pathlib,urllib.request
+          from playwright.sync_api import sync_playwright
+          base='https://jaimehuang168.github.io/pulso-alto-parana-2026/'
+          for n in range(30):
+            try:
+              r=json.load(urllib.request.urlopen(base+'v3-release.json?check='+str(time.time()),timeout=15))
+              if r['source_commit']=='fcb9187f556369a1437af24c96b67cad25e67653':break
+            except Exception:pass
+            time.sleep(3)
+          else:raise RuntimeError('The pinned release manifest is not published yet')
+          checks=[]
+          with sync_playwright() as p:
+            browser=p.chromium.launch()
+            context=browser.new_context(viewport={'width':390,'height':844})
+            page=context.new_page()
+            response=page.goto(base,wait_until='domcontentloaded');page.locator('#login-form').wait_for(timeout=30000)
+            assert response.status==200;checks.append({'name':'Original V2 login remains published','pass':True})
+            response=page.goto(base+'v3/',wait_until='domcontentloaded');page.locator('#login-form').wait_for(timeout=30000)
+            assert response.status==200 and page.get_by_role('button',name='Administrador',exact=True).count()==0
+            checks.append({'name':'V3 private route renders login without demo role buttons','pass':True})
+            # The simulation must work even with every hosted Supabase call blocked.
+            page.route('**/*.supabase.co/**',lambda route:route.abort())
+            response=page.goto(base+'v3-demo/',wait_until='domcontentloaded');assert response.status==200
+            page.get_by_role('button',name='Administrador',exact=True).wait_for(timeout=120000)
+            page.get_by_role('button',name='Administrador',exact=True).click()
+            page.get_by_role('heading',name='Centro de operación',exact=True).wait_for(timeout=45000)
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth+1')
+            page.screenshot(path='evidence/v3-demo-admin-mobile.png',full_page=True)
+            checks.append({'name':'Published subdirectory demo loads PGlite and scoped mobile admin screen','pass':True})
+            page.locator('[data-action="logout"]:visible').first.click()
+            page.get_by_role('button',name='Viewer CDE',exact=True).click()
+            page.get_by_role('heading',name='Acceso a resultados pendiente',exact=True).wait_for(timeout=20000)
+            checks.append({'name':'Published demo viewer remains restricted','pass':True})
+            browser.close()
+          pathlib.Path('evidence/published-smoke.json').write_text(json.dumps({'scope':'Public static routes and browser-local synthetic demo only; no production login or database write','source_commit':r['source_commit'],'passed':len(checks),'failed':0,'checks':checks},indent=2))
+          print(json.dumps(checks,indent=2))
+          PY
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-v3-published-smoke
+          path: evidence/
+          retention-days: 14
