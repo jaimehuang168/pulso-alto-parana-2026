@@ -36,7 +36,7 @@ def login(page,code,password):
 def unlock(page,phrase):
     page.locator('#vault-form').wait_for();page.locator('[name=phrase]').fill(phrase)
     if page.locator('#vault-form [name=repeat]').count():page.locator('#vault-form [name=repeat]').fill(phrase)
-    page.locator('#vault-form button[type=submit]').click();page.locator('.identity').wait_for(timeout=20000)
+    page.locator('#vault-form button[type=submit]').click();page.locator('#vault-form').wait_for(state='detached',timeout=20000);page.locator('#mobile-nav').wait_for(state='attached',timeout=20000)
 def assert_true(value):
     assert value
 
@@ -62,10 +62,10 @@ with sync_playwright() as play:
       page.goto('http://127.0.0.1:8043/');page.get_by_role('button',name='Administrador',exact=True).wait_for(timeout=90000)
       page.get_by_role('button',name='Administrador',exact=True).click();page.get_by_role('heading',name='Centro de operación').wait_for(timeout=30000)
       for route in ['points','people','tasks','catalog','access','paper','imports','exports','settings','guide','overview']:
-        nav(page,route);check(engine+' admin route '+route,lambda:no_overflow(page))
+        print('STAGE',engine,'admin route',route,flush=True);nav(page,route);page.wait_for_timeout(250);check(engine+' admin route '+route,lambda:no_overflow(page))
       page.screenshot(path=str(OUT/(engine+'-admin-mobile.png')),full_page=True)
       # A reload is a new synthetic server session by design. Reuse page for role-specific UI.
-      click_action(page,'logout');page.get_by_role('button',name='Viewer CDE',exact=True).click()
+      click_action(page,'logout');page.get_by_role('button',name='Viewer CDE',exact=True).click();page.get_by_role('heading',name='Acceso a resultados pendiente',exact=True).wait_for(timeout=30000)
       check(engine+' viewer pending state excludes admin controls',lambda: assert_true(page.get_by_text('Acceso a resultados pendiente',exact=True).is_visible() and not page.locator('[data-action="nav"][data-id="access"]').count()))
       click_action(page,'logout');page.get_by_role('button',name='Encuestador CDE',exact=True).click();unlock(page,'QA local phrase demo long')
       click_action(page,'task-start');page.get_by_role('heading',name='Nueva encuesta').wait_for()
@@ -75,7 +75,7 @@ with sync_playwright() as play:
       page.locator('[name=voted]').check();page.locator('[name=consent]').check();page.locator('.choice[data-outcome=candidate]').first.click();page.locator('#capture-form button[type=submit]').click()
       nav(page,'queue');page.get_by_text('Aceptada',exact=True).wait_for(timeout=20000)
       check(engine+' browser capture obtains SQL server receipt',lambda: assert_true(page.get_by_text('Aceptada',exact=True).is_visible()))
-      nav(page,'task');page.on('dialog',lambda dialog:dialog.accept());click_action(page,'finish-my-task');page.wait_for_timeout(300)
+      nav(page,'task');page.on('dialog',lambda dialog:dialog.accept());click_action(page,'finish-my-task');page.get_by_text('Solo envío pendiente',exact=True).first.wait_for(timeout=20000)
       check(engine+' worker finish leaves task drain-only',lambda: assert_true(page.get_by_text('Solo envío pendiente',exact=True).count()>0))
       context.close();browser.close()
     if os.path.exists('/tmp/pulso-v3-browser-private.json'):
@@ -85,10 +85,10 @@ with sync_playwright() as play:
         login(adminPage,fixture['admin']['code'],fixture['admin']['password']);adminPage.get_by_role('heading',name='Centro de operación').wait_for(timeout=30000)
         nav(adminPage,'tasks');click_action(adminPage,'task-new');adminPage.locator('.modal [name=person_id]').select_option(fixture['person']);adminPage.locator('.modal [name=point_id]').select_option(fixture['point']);adminPage.locator('.modal [name=reason]').fill('QA browser native task '+engine);save_modal(adminPage)
         workerCtx=browser.new_context(viewport={'width':390,'height':844});p=workerCtx.new_page();p.goto('http://127.0.0.1:8044/');login(p,fixture['worker']['code'],fixture['worker']['password']);unlock(p,'QA native device phrase 2026')
-        click_action(p,'task-ack');p.wait_for_timeout(250);click_action(p,'task-start');p.get_by_role('heading',name='Nueva encuesta').wait_for();
+        click_action(p,'task-ack');p.locator('[data-action=task-start]').wait_for(timeout=20000);click_action(p,'task-start');p.get_by_role('heading',name='Nueva encuesta').wait_for();
         p.locator('[name=voted]').check();p.locator('[name=consent]').check();p.locator('.choice[data-outcome=candidate]').first.click();p.locator('#capture-form button[type=submit]').click();nav(p,'queue');p.get_by_text('Aceptada',exact=True).wait_for(timeout=20000)
         check(engine+' native UI write reaches actual Supabase receipt',lambda:assert_true(p.get_by_text('Aceptada',exact=True).is_visible()))
-        nav(p,'task');p.on('dialog',lambda dialog:dialog.accept());click_action(p,'finish-my-task');p.wait_for_timeout(300)
+        nav(p,'task');p.on('dialog',lambda dialog:dialog.accept());click_action(p,'finish-my-task');p.get_by_text('Solo envío pendiente',exact=True).first.wait_for(timeout=20000)
         nav(adminPage,'overview');click_action(adminPage,'refresh');adminPage.screenshot(path=str(OUT/(engine+'-native-admin.png')),full_page=True)
         check(engine+' native worker task completion',lambda:assert_true(p.get_by_text('Solo envío pendiente',exact=True).count()>0))
         workerCtx.close();adminCtx.close();browser.close()

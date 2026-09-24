@@ -4,3 +4,9 @@
 @media(min-width:761px){.page-menu{display:none}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 @media print{.sidebar,.topbar,button,.simulation,.capture-actions{display:none!important}.layout{display:block}main.page{padding:0}.card{break-inside:avoid;box-shadow:none}.stats{grid-template-columns:repeat(4,1fr)}body{font-size:11pt}.footer:before{content:'USO INTERNO · MUESTRA NO PONDERADA · NO ES ESCRUTINIO OFICIAL';display:block}}
+
+/* R1: long internal identifiers must wrap, not extend a mobile viewport. */
+.card,.listrow,.stat,.taskbar,.headerline,.modalhead,.choice{overflow-wrap:anywhere}
+.headerline{flex-wrap:wrap}.headerline>*{min-width:0;max-width:100%}
+.field,select,input,textarea,.choice>span,.stat{min-width:0}
+.actions>button,.actions>.button{max-width:100%;white-space:normal}
