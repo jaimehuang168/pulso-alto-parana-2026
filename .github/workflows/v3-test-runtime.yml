@@ -1,0 +1,26 @@
+name: V3 disposable test runtime
+on:
+  push:
+    branches: [feature/v3-field-operations]
+    paths: ['.github/workflows/v3-test-runtime.yml']
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Package PostgreSQL 17 for offline isolated verification
+        run: |
+          docker create --name pgtools postgres:17 >/dev/null
+          mkdir -p /tmp/pgtools/lib /tmp/pgtools/share /tmp/pgtools/packages
+          docker cp pgtools:/usr/lib/postgresql/17 /tmp/pgtools/lib/
+          docker cp pgtools:/usr/share/postgresql/17 /tmp/pgtools/share/
+          python -m pip download --no-deps --dest /tmp/pgtools/packages psycopg==3.2.10
+          docker rm pgtools >/dev/null
+          tar -C /tmp/pgtools -czf /tmp/pgtools.tar.gz .
+      - uses: actions/upload-artifact@v7.0.0
+        with:
+          name: postgres17-offline-test-tools
+          path: /tmp/pgtools.tar.gz
+          retention-days: 1
