@@ -12,7 +12,13 @@ export class CloudAPI{
  }
  async claim(token,claimSecret,lockId){const r=await this.edge({action:'claim',token,claim_secret:claimSecret,lock_id:lockId},true);const {data,error}=await(await this.client()).auth.verifyOtp({token_hash:r.token_hash,type:'email'});if(error)throw error;await this.rpc('v3_enrollment_complete',{p_enrollment:r.enrollment_id});return data.session;}
  async changePassword(password){if(password.length<16)throw new Error('V3_PASSWORD_TOO_SHORT');const {error}=await(await this.client()).auth.updateUser({password});if(error)throw error;}
- async connect(callback){const sb=await this.client();if(this.channel)await sb.removeChannel(this.channel);this.channel=sb.channel('pulso-v3-signals').on('postgres_changes',{event:'UPDATE',schema:'public',table:'v3_signals'},callback).subscribe();}
+ async connect(callback){
+  const sb=await this.client(),session=await this.session();if(!session?.access_token)return;
+  if(this.channel)await sb.removeChannel(this.channel);await sb.realtime.setAuth(session.access_token);
+  // A connected socket is not proof that a particular change was received.
+  // Refresh the authorized snapshot on reconnect; app polling also covers the setup gap.
+  this.channel=sb.channel('pulso-v3-signals').on('postgres_changes',{event:'UPDATE',schema:'public',table:'v3_signals'},callback).subscribe(status=>{if(status==='SUBSCRIBED')callback();});
+ }
  async attachmentUpload(path,file){const {data,error}=await(await this.client()).storage.from('pulso-v3-docs').upload(path,file,{upsert:false,contentType:file.type,cacheControl:'0'});if(error)throw error;return data;}
  async attachmentURL(path){const {data,error}=await(await this.client()).storage.from('pulso-v3-docs').createSignedUrl(path,60);if(error)throw error;return data.signedUrl;}
 }
