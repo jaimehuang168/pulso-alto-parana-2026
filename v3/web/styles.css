@@ -10,3 +10,5 @@
 .headerline{flex-wrap:wrap}.headerline>*{min-width:0;max-width:100%}
 .field,select,input,textarea,.choice>span,.stat{min-width:0}
 .actions>button,.actions>.button{max-width:100%;white-space:normal}
+
+.point-metrics{border-top:1px solid var(--line,#dbe5e8);padding:18px 0}.point-metrics summary{display:flex;flex-wrap:wrap;gap:12px;align-items:center;cursor:pointer;font-size:18px}.point-metrics summary strong{flex:1;min-width:160px;overflow-wrap:anywhere}.point-metrics small{display:block}.point-metrics .stats{margin-top:12px}

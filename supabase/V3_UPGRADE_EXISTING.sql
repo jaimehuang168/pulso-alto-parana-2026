@@ -832,7 +832,13 @@ DECLARE a pulso_v3.actors;BEGIN
  a:=pulso_v3.actor();IF a.role NOT IN('admin','interviewer') THEN RAISE EXCEPTION 'V3_RECORDS_DENIED' USING ERRCODE='42501';END IF;
  IF p_limit NOT BETWEEN 1 AND 500 OR p_limit IS NULL OR (p_before IS NULL)<>(p_before_id IS NULL) THEN RAISE EXCEPTION 'V3_INVALID_PAGE';END IF;
  RETURN(SELECT coalesce(jsonb_agg(to_jsonb(x) ORDER BY x.received_at DESC,x.id DESC),'[]') FROM (
-  SELECT r.* FROM pulso_v3.responses r WHERE (a.role='admin' OR r.person_id=a.person_id) AND (p_district IS NULL OR r.district_id=p_district)
+  SELECT r.*,person.code AS person_code,person.display_name AS person_name,
+   st.name AS station_name,pt.label AS point_label,
+   (SELECT item->>'name' FROM jsonb_array_elements(q.items) item WHERE item->>'id'=r.candidate_id::text) AS candidate_name,
+   (SELECT item->>'list' FROM jsonb_array_elements(q.items) item WHERE item->>'id'=r.candidate_id::text) AS candidate_list
+  FROM pulso_v3.responses r JOIN pulso_v3.people person ON person.id=r.person_id
+  JOIN pulso_v3.points pt ON pt.id=r.point_id JOIN pulso_v3.stations st ON st.id=pt.station_id
+  JOIN pulso_v3.questionnaires q ON q.id=r.questionnaire_id WHERE (a.role='admin' OR r.person_id=a.person_id) AND (p_district IS NULL OR r.district_id=p_district)
   AND (p_before IS NULL OR (r.received_at,r.id)<(p_before,p_before_id)) ORDER BY r.received_at DESC,r.id DESC LIMIT p_limit) x);
 END $$;
 CREATE FUNCTION public.v3_void_own(p_id uuid,p_reason text) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
@@ -881,7 +887,14 @@ DECLARE a pulso_v3.actors;o pulso_v3.operations;result jsonb;BEGIN
   (SELECT coalesce(jsonb_agg(to_jsonb(c) ORDER BY c.district_id),'[]') FROM city_rows c),
   'points',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',p.id,'code',p.code,'label',p.label,'station_name',p.station_name,'district_id',p.district_id,'state',p.state,'planned',p.planned,
     'received',(SELECT count(*) FROM rs r WHERE r.point_id=p.id),'last_received',(SELECT max(received_at) FROM rs r WHERE r.point_id=p.id),
-    'active_workers',(SELECT count(*) FROM pulso_v3.assignments t WHERE t.point_id=p.id AND t.status='active'),
+    'active_workers',(SELECT count(*) FROM pulso_v3.assignments t JOIN pulso_v3.people w ON w.id=t.person_id JOIN pulso_v3.actors aa ON aa.person_id=w.id WHERE t.point_id=p.id AND t.status='active' AND w.approval='approved' AND aa.active AND aa.enrolled),
+    'accepted',(SELECT count(*) FROM rs r WHERE r.point_id=p.id AND r.disposition='accepted'),
+    'pending_review',(SELECT count(*) FROM rs r WHERE r.point_id=p.id AND r.disposition='pending_review'),
+    'excluded',(SELECT count(*) FROM rs r WHERE r.point_id=p.id AND r.disposition='excluded'),
+    'windows',(SELECT coalesce(jsonb_agg(jsonb_build_object('opened_at',w.opened_at,'closed_at',w.closed_at) ORDER BY w.opened_at),'[]') FROM pulso_v3.point_windows w WHERE w.point_id=p.id),
+    'candidate_base',CASE WHEN a.role='admin' THEN (SELECT count(*) FROM rs r JOIN pulso_v3.questionnaires q ON q.id=r.questionnaire_id WHERE r.point_id=p.id AND r.disposition='accepted' AND r.outcome='candidate' AND q.state='published') END,
+    'candidates',CASE WHEN a.role='admin' THEN (SELECT coalesce(jsonb_agg(item||jsonb_build_object('count',(SELECT count(*) FROM rs r WHERE r.point_id=p.id AND r.questionnaire_id=q.id AND r.disposition='accepted' AND r.candidate_id=(item->>'id')::uuid))),'[]') FROM pulso_v3.questionnaires q CROSS JOIN LATERAL jsonb_array_elements(q.items) item WHERE q.district_id=p.district_id AND q.state='published') END,
+    'hours',(SELECT coalesce(jsonb_agg(jsonb_build_object('hour',h.hour,'count',h.n) ORDER BY h.hour),'[]') FROM (SELECT date_trunc('hour',r.captured_at) AS hour,count(*) AS n FROM rs r WHERE r.point_id=p.id GROUP BY date_trunc('hour',r.captured_at)) h),
     'has_started',EXISTS(SELECT 1 FROM pulso_v3.point_windows w WHERE w.point_id=p.id)) ORDER BY p.code),'[]') FROM pts p),
   'team',(SELECT coalesce(jsonb_agg(jsonb_build_object('person_id',w.id,'code',w.code,'name',w.display_name,'assignment_id',t.id,'status',t.status,'point_id',t.point_id,
     'last_seen',(SELECT max(cg.last_seen) FROM pulso_v3.capture_grants cg WHERE cg.assignment_id=t.id),
