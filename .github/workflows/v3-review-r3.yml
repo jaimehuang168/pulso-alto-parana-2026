@@ -21,18 +21,14 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
-      - name: Prepare reviewed source corrections
+      - name: Prepare reviewed release source
         run: |
           python v3/scripts/review-r3.py
           python v3/scripts/prepare-metrics.py
           python v3/scripts/review-r5.py
           python v3/scripts/final-review.py
+          python v3/scripts/release-check.py
           node v3/scripts/make-upgrade.mjs
-          cat > v3/tests/access-text.test.mjs <<'JS'
-          import test from 'node:test';import assert from 'node:assert/strict';import{credentialText}from'../web/modules/core.mjs';
-          test('Private text retains exact generated password without spreadsheet prefixes',()=>{for(const password of ['-abc_0123456789abc','+abc_0123456789abc','  valid long passphrase  ','=not_a_formula_here'])assert(credentialText({code:'VIEW-QA',password}).includes('Contraseña: '+password+'\n'));});
-          test('Private credential text rejects line injection',()=>{assert.throws(()=>credentialText({code:'VIEW-QA\nADMIN',password:'valid-password-long'}),/INVALID_CREDENTIAL/);assert.throws(()=>credentialText({code:'VIEW-QA',password:'secret\r\nOTHER'}),/INVALID_CREDENTIAL/);});
-          JS
       - name: Locked dependencies and source regressions
         run: |
           npm --prefix v3 ci
@@ -44,14 +40,14 @@ jobs:
           node v3/tests/enrollment.mjs
           node v3/tests/review.mjs
           cd v3 && npm audit --json > evidence/dependency-audit.json
-      - name: Commit tested source and launch all native gates
+      - name: Commit tested source and launch native gates
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- supabase/migrations/005_v3_api.sql supabase/migrations/007_v3_cutover.sql supabase/migrations/008_v3_storage.sql supabase/V3_UPGRADE_EXISTING.sql v3/tests/native.mjs v3/tests/database.mjs v3/tests/browser.py v3/tests/access-text.test.mjs v3/web/modules/views.mjs v3/web/modules/core.mjs v3/web/styles.css v3/web/app.mjs
-          if ! git diff --cached --quiet; then git commit -m '完成手機提示、私人登入資料格式與原生流程清理；保留所有安全斷言';git push origin HEAD:v3/field-operations;fi
+          git add -- supabase/migrations/005_v3_api.sql supabase/migrations/007_v3_cutover.sql supabase/migrations/008_v3_storage.sql supabase/V3_UPGRADE_EXISTING.sql v3/tests/native.mjs v3/tests/database.mjs v3/tests/browser.py v3/tests/restore-native.mjs v3/scripts/build.mjs v3/web/modules/views.mjs v3/web/modules/core.mjs v3/web/styles.css v3/web/app.mjs
+          if ! git diff --cached --quiet; then git commit -m '驗證原子升級、跨站快取隔離及本機還原；不觸及正式資料';git push origin HEAD:v3/field-operations;fi
           gh workflow run v3-native.yml --ref v3/field-operations
       - name: Build isolated demonstration and private frontend
         run: |
