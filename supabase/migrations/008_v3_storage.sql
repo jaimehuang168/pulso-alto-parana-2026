@@ -3,7 +3,7 @@ ALTER TABLE pulso_v3.capture_grants ADD COLUMN last_seen timestamptz,
  ADD COLUMN pending_reported integer CHECK(pending_reported BETWEEN 0 AND 100000),ADD COLUMN pending_reported_at timestamptz;
 CREATE FUNCTION public.v3_ping(p_grant uuid,p_pending integer) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE a pulso_v3.actors;BEGIN
- a:=pulso_v3.actor();IF p_pending NOT BETWEEN 0 AND 100000 THEN RAISE EXCEPTION 'V3_INVALID_COUNT';END IF;
+ a:=pulso_v3.actor();IF p_pending IS NULL OR p_pending NOT BETWEEN 0 AND 100000 THEN RAISE EXCEPTION 'V3_INVALID_COUNT';END IF;
  UPDATE pulso_v3.capture_grants SET last_seen=clock_timestamp(),pending_reported=p_pending,pending_reported_at=clock_timestamp()
  WHERE id=p_grant AND user_id=a.user_id AND auth_session_id=(auth.jwt()->>'session_id')::uuid AND revoked_at IS NULL;
  IF NOT FOUND THEN RAISE EXCEPTION 'V3_GRANT_DENIED' USING ERRCODE='42501';END IF;
@@ -69,7 +69,7 @@ DECLARE a pulso_v3.actors;t pulso_v3.assignments;o pulso_v3.operations;BEGIN
  UPDATE pulso_v3.assignments SET status=CASE WHEN started_at IS NULL THEN 'ended' ELSE 'draining' END,
  ended_at=clock_timestamp(),drain_until=clock_timestamp()+make_interval(hours=>o.drain_hours),revision=revision+1 WHERE id=t.id;
  PERFORM pulso_v3.log(a.user_id,'assignment.owner_finished',t.id,NULL,jsonb_build_object('reason',p_reason));
- RETURN jsonb_build_object('id',t.id,'status','draining','new_captures',false);
+ RETURN jsonb_build_object('id',t.id,'status',CASE WHEN t.started_at IS NULL THEN 'ended' ELSE 'draining' END,'new_captures',false);
 END $$;
 REVOKE ALL ON FUNCTION public.v3_recover_upload(uuid),public.v3_finish_my_task(uuid,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.v3_recover_upload(uuid),public.v3_finish_my_task(uuid,text) TO authenticated;

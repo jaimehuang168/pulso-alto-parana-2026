@@ -16,7 +16,7 @@ BEGIN
  a:=pulso_v3.actor();IF a.role<>'admin' THEN RAISE EXCEPTION 'V3_ADMIN_ONLY' USING ERRCODE='42501';END IF;
  SELECT operation_mode INTO mode FROM public.settings WHERE id=1 FOR UPDATE;
  IF mode='v3' THEN RETURN jsonb_build_object('active',true,'duplicate',true);END IF;
- IF p_legacy_outbox_handled IS DISTINCT FROM true OR char_length(btrim(p_backup_reference))<10 OR char_length(btrim(p_acceptance_reference))<10
+ IF p_legacy_outbox_handled IS DISTINCT FROM true OR char_length(btrim(coalesce(p_backup_reference,''))) NOT BETWEEN 10 AND 2000 OR char_length(btrim(coalesce(p_acceptance_reference,''))) NOT BETWEEN 10 AND 2000
   OR (SELECT count(*) FROM pulso_v3.schema_versions WHERE version IN(4,5,6,7,8))<>5 THEN RAISE EXCEPTION 'V3_CUTOVER_EVIDENCE_REQUIRED';END IF;
  IF EXISTS(SELECT 1 FROM public.profiles p LEFT JOIN pulso_v3.actors legacy_actor ON legacy_actor.user_id=p.id WHERE legacy_actor.user_id IS NULL OR legacy_actor.active IS DISTINCT FROM p.active OR legacy_actor.role IS DISTINCT FROM p.role) THEN RAISE EXCEPTION 'V3_LEGACY_ACTOR_DRIFT';END IF;
  IF EXISTS(SELECT 1 FROM public.responses) OR EXISTS(SELECT 1 FROM public.settings WHERE state<>'setup') THEN RAISE EXCEPTION 'V3_LEGACY_DATA_NEEDS_REVIEW';END IF;

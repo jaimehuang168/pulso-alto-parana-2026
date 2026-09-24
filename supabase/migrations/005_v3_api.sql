@@ -192,7 +192,8 @@ BEGIN
    IF o.phase<>'running' OR o.fieldwork_date<>(now_at AT TIME ZONE 'America/Asuncion')::date OR pt.state NOT IN('approved','paused') OR NOT st.verified
     OR NOT EXISTS(SELECT 1 FROM pulso_v3.questionnaires WHERE district_id=d AND questionnaires.state='published') THEN RAISE EXCEPTION 'V3_POINT_NOT_READY'; END IF;
    IF NOT EXISTS(SELECT 1 FROM pulso_v3.assignments x JOIN pulso_v3.people w ON w.id=x.person_id
-     WHERE x.point_id=id AND x.status IN('acknowledged','active') AND w.approval='approved') THEN RAISE EXCEPTION 'V3_POINT_NEEDS_ONE_READY_WORKER'; END IF;
+     JOIN pulso_v3.actors worker_actor ON worker_actor.person_id=w.id
+     WHERE x.point_id=id AND x.status IN('acknowledged','active') AND w.approval='approved' AND worker_actor.active AND worker_actor.enrolled) THEN RAISE EXCEPTION 'V3_POINT_NEEDS_ONE_READY_WORKER'; END IF;
    INSERT INTO pulso_v3.point_windows(point_id,opened_by,reason) VALUES(id,a.user_id,reason);
   ELSIF state IN('paused','closed') AND pt.state IN('open','paused','approved') THEN
    UPDATE pulso_v3.point_windows SET closed_at=now_at,closed_by=a.user_id WHERE point_id=id AND closed_at IS NULL;
@@ -218,7 +219,8 @@ BEGIN
  WHEN 'assignment.create' THEN
   SELECT * INTO per FROM pulso_v3.people WHERE people.id=(p_data->>'person_id')::uuid FOR UPDATE;
   IF per.id IS NULL OR pt.id IS NULL OR pt.state='draft' OR pt.state='closed' OR length(reason)<5 THEN RAISE EXCEPTION 'V3_INVALID_ASSIGNMENT'; END IF;
-  IF per.home_district<>d THEN PERFORM pulso_v3.require_cap(a.user_id,'assign',per.home_district,per.recruit_point); END IF;
+  -- A point-scoped coordinator must also be permitted to manage the source person.
+  PERFORM pulso_v3.require_cap(a.user_id,'assign',per.home_district,per.recruit_point);
   FOR prior_scope IN SELECT x.point_id,s.district_id FROM pulso_v3.assignments x JOIN pulso_v3.points p ON p.id=x.point_id JOIN pulso_v3.stations s ON s.id=p.station_id WHERE x.person_id=per.id AND x.status IN('pending','acknowledged','active') LOOP
    PERFORM pulso_v3.require_cap(a.user_id,'assign',prior_scope.district_id,prior_scope.point_id);
   END LOOP;
@@ -304,11 +306,13 @@ BEGIN
   UPDATE pulso_v3.responses SET disposition=state,reason_code='REVIEWED',revision=revision+1 WHERE responses.id=id;
   DELETE FROM pulso_v3.viewer_snapshots WHERE district_id=d;
  WHEN 'paper.submit' THEN
+  IF EXISTS(SELECT 1 FROM jsonb_object_keys(p_data) k WHERE k NOT IN('assignment_id','response_id','candidate_id','outcome','consent','already_voted','started_at','captured_at','time_precision','paper_batch','paper_number','reason')) THEN RAISE EXCEPTION 'V3_INVALID_PAPER_FIELDS';END IF;
+  IF jsonb_typeof(p_data->'already_voted') IS DISTINCT FROM 'boolean' OR p_data->'already_voted'<>'true'::jsonb OR jsonb_typeof(p_data->'consent') IS DISTINCT FROM 'boolean' THEN RAISE EXCEPTION 'V3_CONSENT_REQUIRED';END IF;
   IF length(reason)<10 OR nullif(p_data->>'paper_batch','') IS NULL OR nullif(p_data->>'paper_number','') IS NULL THEN RAISE EXCEPTION 'V3_PAPER_REFERENCE_REQUIRED'; END IF;
   SELECT * INTO q FROM pulso_v3.questionnaires WHERE questionnaires.id=t.questionnaire_id;
   state:=p_data->>'outcome';id:=(p_data->>'response_id')::uuid;
   IF state='candidate' AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(q.items) item WHERE item->>'id'=p_data->>'candidate_id') THEN RAISE EXCEPTION 'V3_CANDIDATE_VERSION_MISMATCH'; END IF;
-  IF (p_data->>'time_precision') NOT IN('minutes','interval') THEN RAISE EXCEPTION 'V3_PAPER_TIME_PRECISION'; END IF;
+  IF p_data->>'time_precision' IS NULL OR (p_data->>'time_precision') NOT IN('minutes','interval') THEN RAISE EXCEPTION 'V3_PAPER_TIME_PRECISION'; END IF;
   INSERT INTO pulso_v3.responses(id,assignment_id,person_id,point_id,district_id,questionnaire_id,candidate_id,outcome,consent,already_voted,started_at,captured_at,source,time_precision,paper_batch,paper_number,submitted_by,payload,payload_hash,disposition,reason_code)
    VALUES(id,t.id,t.person_id,point,d,q.id,nullif(p_data->>'candidate_id','')::uuid,state,(p_data->>'consent')::boolean,(p_data->>'already_voted')::boolean,
     (p_data->>'started_at')::timestamptz,(p_data->>'captured_at')::timestamptz,'paper',p_data->>'time_precision',p_data->>'paper_batch',p_data->>'paper_number',a.user_id,p_data,pulso_v3.hash(p_data),'pending_review','PAPER_REQUIRES_REVIEW');
@@ -594,7 +598,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
 DECLARE a pulso_v3.actors;e pulso_v3.export_snapshots;BEGIN
  a:=pulso_v3.actor();IF a.role<>'admin' THEN RAISE EXCEPTION 'V3_ADMIN_ONLY' USING ERRCODE='42501';END IF;
  SELECT * INTO e FROM pulso_v3.export_snapshots WHERE id=p_id AND owner_id=a.user_id AND expires_at>statement_timestamp();
- IF e.id IS NULL OR p_offset<0 OR p_limit NOT BETWEEN 1 AND 500 THEN RAISE EXCEPTION 'V3_INVALID_EXPORT';END IF;
+ IF e.id IS NULL OR p_offset IS NULL OR p_limit IS NULL OR p_offset<0 OR p_limit NOT BETWEEN 1 AND 500 THEN RAISE EXCEPTION 'V3_INVALID_EXPORT';END IF;
  IF jsonb_typeof(e.payload)<>'array' THEN RETURN jsonb_build_object('snapshot_at',e.created_at,'data',e.payload,'next_offset',NULL);END IF;
  RETURN jsonb_build_object('snapshot_at',e.created_at,'data',(SELECT coalesce(jsonb_agg(x.value ORDER BY x.ordinality),'[]') FROM jsonb_array_elements(e.payload) WITH ORDINALITY x WHERE x.ordinality>p_offset AND x.ordinality<=p_offset+p_limit),
   'next_offset',CASE WHEN p_offset+p_limit<jsonb_array_length(e.payload) THEN p_offset+p_limit END,'total',jsonb_array_length(e.payload));
