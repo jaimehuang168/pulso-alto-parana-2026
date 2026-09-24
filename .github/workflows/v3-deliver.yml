@@ -1,0 +1,125 @@
+name: V3 verified source delivery
+on:
+  push:
+    branches: ['v3/field-operations']
+    paths: ['.github/workflows/v3-deliver.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v3-source-delivery
+  cancel-in-progress: false
+jobs:
+  unpack:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      source: ${{ steps.commit.outputs.source }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: v3/field-operations
+      - name: Verify hash and every source path before writing
+        shell: python
+        run: |
+          import base64, hashlib, io, json, pathlib, tarfile
+          root = pathlib.Path.cwd()
+          parts = [root / '.v3-delivery' / ('part-%02d.b64' % i) for i in range(1, 10)]
+          raw = base64.b64decode(''.join(''.join(p.read_text().split()) for p in parts), validate=True)
+          assert len(raw) == 97864, 'Package length mismatch'
+          assert hashlib.sha256(raw).hexdigest() == '3af673dfa270b531ba94edce0aa05325fa73a2ed52a509b09bc39689a3ed641b', 'Package hash mismatch: no source changed'
+          with tarfile.open(fileobj=io.BytesIO(raw), mode='r:xz') as t:
+            members=t.getmembers()
+            assert len(members)==44 and all(m.isfile() and m.size<200000 for m in members)
+            assert len({m.name for m in members}) == len(members)
+            manifest=json.loads(t.extractfile('V3_SOURCE_MANIFEST.json').read())
+            assert manifest['version']=='3.0.0-rc.1' and len(manifest['files'])==43
+            assert {m.name for m in members} == set(manifest['files']) | {'V3_SOURCE_MANIFEST.json'}
+            planned={}
+            for name, info in manifest['files'].items():
+              p=pathlib.PurePosixPath(name)
+              assert not p.is_absolute() and '..' not in p.parts and '\\' not in name
+              assert name.startswith(('v3/','supabase/')) and not any(x in p.parts for x in ('.git','node_modules','.env'))
+              target=root/name
+              assert target.resolve().is_relative_to(root) and not target.is_symlink()
+              data=t.extractfile(name).read()
+              assert len(data)==info['size'] and hashlib.sha256(data).hexdigest()==info['sha256'], name
+              if target.exists() and target.read_bytes()!=data:
+                assert name in manifest['existing_baseline'] and hashlib.sha256(target.read_bytes()).hexdigest()==manifest['existing_baseline'][name], 'Existing source changed: '+name
+              planned[name]=data
+            for name,data in planned.items():
+              target=root/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data)
+            (root/'V3_SOURCE_MANIFEST.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          print('All 43 source files verified. No production settings or data were touched.')
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Check source syntax before commit
+        run: node v3/scripts/check.mjs
+      - name: Commit only verified source to V3 branch
+        id: commit
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- v3 supabase/config.toml supabase/V3_PREFLIGHT_EXISTING.sql supabase/V3_UPGRADE_EXISTING.sql supabase/functions/field-enrollment supabase/functions/provision-team/index.ts supabase/migrations/004_v3_expand.sql supabase/migrations/005_v3_api.sql supabase/migrations/006_v3_enrollment.sql supabase/migrations/007_v3_cutover.sql supabase/migrations/008_v3_storage.sql V3_SOURCE_MANIFEST.json
+          if ! git diff --cached --quiet; then
+            git commit -m '交付 Pulso V3 現場派工、受限開通、加密補傳、分點收件及驗收程式'
+            git push origin HEAD:v3/field-operations
+          fi
+          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo 'V3 source delivered to isolated branch. Production main and Supabase remain unchanged.' >> "$GITHUB_STEP_SUMMARY"
+  test:
+    needs: unpack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.unpack.outputs.source }}
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Install exact top-level dependencies
+        working-directory: v3
+        run: |
+          npm install
+          mkdir -p evidence
+          npm audit --json > evidence/dependency-audit.json || true
+      - name: Run baseline and new source regressions
+        run: |
+          node --check web/app.js
+          node --test tests/*.cjs
+          python tests/import_package_test.py
+          node v3/scripts/check.mjs
+          node --test v3/tests/*.test.mjs | tee v3/evidence/core.log
+          node v3/tests/database.mjs | tee v3/evidence/database.log
+          node v3/tests/enrollment.mjs | tee v3/evidence/enrollment.log
+      - name: Build isolated demonstration and private-login frontends
+        run: |
+          node v3/scripts/fetch-vendor.mjs
+          node v3/scripts/build.mjs --demo
+          node v3/scripts/build.mjs
+      - name: Install actual Chromium and WebKit test engines
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Browser storage, input and screen isolation
+        run: python v3/tests/browser.py
+      - name: Package only public RC artifacts and evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/pulso-v3-public-artifacts
+          git rev-parse HEAD > /tmp/pulso-v3-public-artifacts/SOURCE_SHA.txt
+          cp v3/package-lock.json /tmp/pulso-v3-public-artifacts/
+          cp -r v3/evidence /tmp/pulso-v3-public-artifacts/
+          if [ -d v3/dist ]; then tar -C v3/dist -czf /tmp/pulso-v3-public-artifacts/private-login-frontend.tar.gz .; fi
+          if [ -d v3/preview ]; then tar -C v3/preview -czf /tmp/pulso-v3-public-artifacts/isolated-demo.tar.gz .; fi
+          git archive HEAD > /tmp/pulso-v3-public-artifacts/source.tar
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-v3-delivery-and-browser-evidence
+          path: /tmp/pulso-v3-public-artifacts/
+          retention-days: 7
