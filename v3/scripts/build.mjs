@@ -1,3 +1,4 @@
+import {serviceWorkerSource} from './service-worker-source.mjs';
 import fs from 'node:fs/promises';import path from 'node:path';import {build} from 'esbuild';import {fileURLToPath} from 'node:url';import crypto from 'node:crypto';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url))),repo=path.dirname(root),demo=process.argv.includes('--demo'),out=path.join(root,demo?'preview':'dist');await fs.rm(out,{recursive:true,force:true});await fs.mkdir(path.join(out,'vendor'),{recursive:true});
 await build({entryPoints:[path.join(root,'web/app.mjs')],bundle:true,format:'esm',target:['es2022'],outfile:path.join(out,'app.js'),external:['./simulation.mjs'],minify:false,sourcemap:false});
@@ -17,5 +18,5 @@ if(demo){await fs.writeFile(path.join(out,'qa-harness.html'),'<!doctype html><ht
 }
 for(const name of ['templates','manual-es.html']){try{await fs.cp(path.join(root,'web',name),path.join(out,name),{recursive:true});}catch{}}
 const files=(await fs.readdir(out)).filter(f=>/\.(js|css|html|svg|webmanifest)$/.test(f));const hash=crypto.createHash('sha256');for(const f of files)hash.update(await fs.readFile(path.join(out,f)));const cache='pulso-v3-'+hash.digest('hex').slice(0,16);
-await fs.writeFile(path.join(out,'sw.js'),`const CACHE=${JSON.stringify(cache)},SHELL=${JSON.stringify(['./',...files.map(f=>'./'+f),'./vendor/supabase.js'])};self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))));self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('pulso-v3-')&&k!==CACHE).map(k=>caches.delete(k))))));self.addEventListener('fetch',e=>{const r=e.request,u=new URL(r.url);if(r.method!=='GET'||u.origin!==location.origin||!SHELL.some(p=>new URL(p,self.registration.scope).pathname===u.pathname))return;e.respondWith(fetch(r).then(res=>{if(res.ok)e.waitUntil(caches.open(CACHE).then(c=>c.put(r,res.clone())));return res;}).catch(()=>caches.match(r).then(x=>x||new Response('Sin conexión; conecte el dispositivo para instalar la versión.',{status:503}))));});`);
+await fs.writeFile(path.join(out,'sw.js'),serviceWorkerSource(cache,files));
 await fs.writeFile(path.join(out,'build-info.json'),JSON.stringify({version:'3.0.0-rc.1',simulation:demo,static_cache:cache,configured:!!url&&!demo,created_at:new Date().toISOString()},null,2));console.log(out);

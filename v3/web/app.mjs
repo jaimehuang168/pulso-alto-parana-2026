@@ -46,7 +46,7 @@ async function sync(manual=false){if(S.syncing||!vault?.key||!S.boot||S.boot.act
   try{const r=await api.rpc('v3_submit_response',{p_event:row.event,p_client:C.CLIENT});await vault.acknowledge(row.event,r);}
   catch(e){await vault.failure(row.event,e);if(/V3_ACCOUNT_DISABLED|V3_SESSION_REQUIRED|V3_TASK_DENIED|V3_WORKER_NOT_APPROVED/.test(e.message)){error(e);break;}if(/network|fetch|timeout/i.test(e.message))break;}
  }S.queue=await vault.entries();if(S.pack)await api.rpc('v3_ping',{p_grant:S.pack.grant.id,p_pending:S.queue.filter(x=>x.status!=='received').length}).catch(()=>{});
- if(manual||attempted.length)toast(S.queue.some(x=>x.status!=='received')?'Revise los pendientes sin confirmar.':'Todos los registros locales tienen recibo.');if(S.page==='queue')render();
+ if(manual||attempted.length)if(manual||attempted.length)toast(S.queue.some(x=>x.status!=='received')?'Revise los pendientes sin confirmar.':'Todos los registros locales tienen recibo.');if(S.page==='queue')render();
  }finally{S.syncing=false;}}
 async function logout(){if(S.syncing)throw new Error('V3_WAIT_FOR_SYNC');if(vault?.key){const rows=await vault.entries(),n=rows.filter(x=>x.status!=='received').length;if(n&&!confirm(`Hay ${n} pendiente(s) cifrado(s). Se conservarán para esta misma persona; la siguiente no podrá enviarlos. ¿Bloquear archivo y salir?`))return;await vault.write('pack',S.pack);vault.lock();}
  if(navigator.onLine)await api.logout();else if(!S.simulation){const sb=await api.client();await sb.auth.signOut({scope:'local'}).catch(()=>{});}S.boot=null;S.session=null;S.pack=null;S.queue=[];S.unlock=false;S.error=null;close();render();}
