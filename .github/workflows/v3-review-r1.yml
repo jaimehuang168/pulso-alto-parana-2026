@@ -1,0 +1,103 @@
+name: V3 review R1 and browser regression
+on:
+  push:
+    branches: ['v3/field-operations']
+    paths: ['.github/workflows/v3-review-r1.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: v3/field-operations
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Apply explicit small reviewed fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          assert Path('v3/tests/browser.py').is_file()
+          p=Path('v3/web/styles.css')
+          extra='''
+          /* R1: long internal identifiers must wrap, not extend a mobile viewport. */
+          .card,.listrow,.stat,.taskbar,.headerline,.modalhead,.choice{overflow-wrap:anywhere}
+          .headerline{flex-wrap:wrap}.headerline>*{min-width:0;max-width:100%}
+          .field,select,input,textarea,.choice>span,.stat{min-width:0}
+          .actions>button,.actions>.button{max-width:100%;white-space:normal}
+          '''
+          if 'R1: long internal identifiers' not in p.read_text():p.write_text(p.read_text()+extra)
+          p=Path('v3/tests/browser.py');s=p.read_text()
+          replacements={
+            "page.locator('#vault-form button[type=submit]').click();page.locator('.identity').wait_for(timeout=20000)":"page.locator('#vault-form button[type=submit]').click();page.locator('#vault-form').wait_for(state='detached',timeout=20000);page.locator('#mobile-nav').wait_for(state='attached',timeout=20000)",
+            "page.get_by_role('button',name='Viewer CDE',exact=True).click()":"page.get_by_role('button',name='Viewer CDE',exact=True).click();page.get_by_role('heading',name='Acceso a resultados pendiente',exact=True).wait_for(timeout=30000)",
+            "click_action(page,'finish-my-task');page.wait_for_timeout(300)":"click_action(page,'finish-my-task');page.get_by_text('Solo envío pendiente',exact=True).first.wait_for(timeout=20000)",
+            "click_action(p,'finish-my-task');p.wait_for_timeout(300)":"click_action(p,'finish-my-task');p.get_by_text('Solo envío pendiente',exact=True).first.wait_for(timeout=20000)",
+            "click_action(p,'task-ack');p.wait_for_timeout(250);click_action(p,'task-start')":"click_action(p,'task-ack');p.locator('[data-action=task-start]').wait_for(timeout=20000);click_action(p,'task-start')",
+            "nav(page,route);check(engine+' admin route '+route,lambda:no_overflow(page))":"print('STAGE',engine,'admin route',route,flush=True);nav(page,route);page.wait_for_timeout(250);check(engine+' admin route '+route,lambda:no_overflow(page))"
+          }
+          for a,b in replacements.items():
+            if a in s:
+              assert s.count(a)==1,a
+              s=s.replace(a,b)
+            else:assert b in s,a
+          p.write_text(s)
+      - name: Lock and audit dependencies
+        working-directory: v3
+        run: |
+          npm install
+          mkdir -p evidence
+          npm audit --json > evidence/dependency-audit.json || true
+      - name: Persist reviewed fixes to feature branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- v3/web/styles.css v3/tests/browser.py v3/package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m '反向審查修正手機長碼排版與瀏覽器非同步驗收，鎖定依賴'
+            git push origin HEAD:v3/field-operations
+          fi
+          gh workflow run v3-native.yml --ref v3/field-operations
+      - name: Full source and database regression
+        run: |
+          node --test tests/*.cjs
+          python tests/import_package_test.py
+          node v3/scripts/check.mjs
+          node --test v3/tests/*.test.mjs
+          node v3/tests/database.mjs
+          node v3/tests/enrollment.mjs
+          node v3/scripts/fetch-vendor.mjs
+          node v3/scripts/build.mjs --demo
+          node v3/scripts/build.mjs
+      - name: Install browser engines
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Actual browser regression
+        shell: bash
+        run: |
+          set -o pipefail
+          python v3/tests/browser.py 2>&1 | tee v3/evidence/browser-console.log
+      - name: Package public RC and sanitized evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/pulso-v3-r1
+          git rev-parse HEAD > /tmp/pulso-v3-r1/SOURCE_SHA.txt
+          cp -r v3/evidence /tmp/pulso-v3-r1/
+          cp v3/package-lock.json /tmp/pulso-v3-r1/
+          git archive HEAD > /tmp/pulso-v3-r1/source.tar
+          if [ -d v3/preview ]; then tar -C v3/preview -czf /tmp/pulso-v3-r1/isolated-demo.tar.gz .; fi
+          if [ -d v3/dist ]; then tar -C v3/dist -czf /tmp/pulso-v3-r1/private-login-frontend.tar.gz .; fi
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-v3-review-r1
+          path: /tmp/pulso-v3-r1/
+          retention-days: 7
