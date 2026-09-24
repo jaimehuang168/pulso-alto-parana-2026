@@ -25,6 +25,8 @@ Deno.serve(async(req: Request)=>{
   if(authError||!verified.user)return reply({error:'Sesión no válida.'},401);
   const {data:actor,error:actorError}=await admin.from('profiles').select('id,role,active').eq('id',verified.user.id).single();
   if(actorError||!actor?.active||actor.role!=='admin')return reply({error:'Solo coordinación autorizada.'},403);
+  const {data:mode,error:modeError}=await admin.from('settings').select('*').eq('id',1).single();
+  if(modeError||mode?.operation_mode==='v3')return reply({error:'Use la administración V3. El servicio V2 ya no está habilitado.'},409);
   let body: {action?:string;district_id?:string;code?:string;role?:string;display_name?:string};
   try{const raw=await req.text();if(raw.length>4096)return reply({error:'Solicitud demasiado grande.'},413);body=JSON.parse(raw);}catch{return reply({error:'JSON inválido.'},400);}
   if(body.action==='reset-password'){

@@ -1,0 +1,33 @@
+/** Reverse-review regressions. Real SQL execution; Auth identities in this test are fixtures. */
+import {database,as,admin,adminSession} from './db-fixture.mjs';
+import assert from 'node:assert/strict';import {randomUUID} from 'node:crypto';import fs from 'node:fs/promises';
+const db=await database(),results=[];
+const rpc=async(name,args=[],u=admin,s=adminSession)=>Object.values((await as(db,u,s,`select public.${name}(${args.map((_,i)=>'$'+(i+1)).join(',')})`,args))[0])[0];
+const cmd=(a,d,r=0,u=admin,s=adminSession)=>rpc('v3_command',[a,d,randomUUID(),r],u,s);
+const revision=async(t,id)=>(await db.query(`select revision from pulso_v3.${t} where ${t==='actors'?'user_id':'id'}=$1`,[id])).rows[0].revision;
+async function test(name,f){try{await f();results.push({name,pass:true});console.log('PASS',name);}catch(e){results.push({name,pass:false,error:e.message});throw e;}}
+try{
+for(const [label,args] of [['null backup',[true,null,'Verified staging acceptance']],['null acceptance',[true,'Verified backup reference',null]],['null checkbox',[null,'Verified backup reference','Verified staging acceptance']],['oversized reference',[true,'x'.repeat(2001),'Verified staging acceptance']]])await test('Cutover rejects '+label,async()=>{await assert.rejects(rpc('v3_activate',args),/CUTOVER_EVIDENCE_REQUIRED/);assert.equal((await db.query('select operation_mode from public.settings')).rows[0].operation_mode,'v2');});
+await rpc('v3_activate',[true,'Only disposable QA backup reference','Only isolated QA acceptance reference']);
+let pointA,pointB;
+for(const n of ['A','B']){const site=(await cmd('station.save',{district_id:'cde',code:'REV-'+n,name:'Sitio sintético '+n,address:'Dirección QA sintética 10'})).id;const p=(await cmd('point.save',{station_id:site,code:'REV-P-'+n,label:'Acceso sintético '+n})).id;await cmd('point.approve',{id:p,verified:true,reason:'Isolated fixture verification'},1);if(n==='A')pointA=p;else pointB=p;}
+const q=(await cmd('questionnaire.save',{district_id:'cde',contest:'Intendencia municipal',methodology:'Synthetic QA protocol only; every fifth exiting participant',sample_interval:5,reference:'QA sample catalogue',items:[{id:randomUUID(),name:'DEMO A',list:'DEMO 1'},{id:randomUUID(),name:'DEMO B',list:'DEMO 2'}]})).id;await cmd('questionnaire.publish',{id:q,confirmed:true},1);
+const co=randomUUID(),cs=randomUUID(),worker=randomUUID(),ws=randomUUID(),person=(await cmd('person.add',{district_id:'cde',point_id:pointB,display_name:'Scoped QA person'})).id;
+await db.query('insert into auth.users(id,email) values($1,$2),($3,$4)',[co,'co@qa.invalid',worker,'worker@qa.invalid']);for(const [u,s]of[[co,cs],[worker,ws]])await db.query('insert into auth.sessions values($1,$2)',[s,u]);
+await db.query("insert into pulso_v3.actors(user_id,code,display_name,role,enrolled) values($1,'COORD-REVIEW','QA coordinator','coordinator',true)",[co]);await db.query("insert into pulso_v3.actors(user_id,person_id,code,display_name,role,enrolled) values($1,$2,'EN-REVIEW','QA worker','interviewer',true)",[worker,person]);
+await cmd('grant.save',{user_id:co,district_id:'cde',point_id:pointA,capabilities:['assign','recruit','operations'],valid_until:new Date(Date.now()+86400000).toISOString()});
+await test('A coordinator cannot take an unassigned person from another point in the same city',async()=>{await assert.rejects(cmd('assignment.create',{person_id:person,point_id:pointA,reason:'Invalid source point scope'},0,co,cs),/SCOPE_DENIED/);});
+await rpc('v3_training',[['after_voting','voluntary','pending_not_received'],true],worker,ws);await cmd('person.approve',{id:person,reason:'Trainer confirmed isolated practice'},await revision('people',person));
+let task=(await cmd('assignment.create',{person_id:person,point_id:pointB,reason:'Original review task'})).id;
+await test('Finishing a never-started task reports ended, not draining',async()=>{assert.equal((await rpc('v3_finish_my_task',[task,'Never started task closing'],worker,ws)).status,'ended');});
+task=(await cmd('assignment.create',{person_id:person,point_id:pointB,reason:'Ready worker review task'})).id;await rpc('v3_ack_assignment',[task,1,q,pointB],worker,ws);
+const today=(await db.query("select (now() at time zone 'America/Asuncion')::date::text d")).rows[0].d;
+await cmd('operation.save',{title:'QA review',contest:'Intendencia municipal',fieldwork_date:today,retention_policy:'Disposable only; no real data'},await revision('operations',1));await cmd('operation.state',{state:'running',reason:'QA scoped readiness opening'},await revision('operations',1));
+await cmd('actor.disable',{id:worker},await revision('actors',worker));
+await test('A disabled worker does not satisfy point readiness',async()=>{await assert.rejects(cmd('point.state',{id:pointB,state:'open',reason:'Disabled worker cannot open point'},await revision('points',pointB)),/POINT_NEEDS_ONE_READY_WORKER/);});
+const snapshot=await cmd('export.create',{kind:'responses'});
+for(const [label,args]of[['offset',[snapshot.id,null,100]],['limit',[snapshot.id,0,null]]])await test('Null export '+label+' cannot produce an apparently complete truncated export',async()=>{await assert.rejects(rpc('v3_export_page',args),/INVALID_EXPORT/);});
+await test('Unknown pending telemetry is not recorded as a confirmed count',async()=>{await assert.rejects(rpc('v3_ping',[randomUUID(),null]),/INVALID_COUNT/);});
+await test('Paper transcript cannot persist extra voter identifiers',async()=>{await assert.rejects(cmd('paper.submit',{assignment_id:task,response_id:randomUUID(),outcome:'blank',candidate_id:null,already_voted:true,consent:true,started_at:new Date().toISOString(),captured_at:new Date().toISOString(),time_precision:'minutes',paper_batch:'REVIEW',paper_number:'1',reason:'Synthetic paper record only',voter_name:'NOT ALLOWED'}),/INVALID_PAPER_FIELDS/);});
+await test('Null paper time precision is rejected explicitly',async()=>{await assert.rejects(cmd('paper.submit',{assignment_id:task,response_id:randomUUID(),outcome:'blank',candidate_id:null,already_voted:true,consent:true,started_at:new Date().toISOString(),captured_at:new Date().toISOString(),time_precision:null,paper_batch:'REVIEW',paper_number:'2',reason:'Synthetic paper record only'}),/PAPER_TIME_PRECISION/);});
+}catch(e){console.error('REVIEW FAIL',e.message);process.exitCode=1;}finally{await fs.mkdir(new URL('../evidence/',import.meta.url),{recursive:true});await fs.writeFile(new URL('../evidence/reverse-review.json',import.meta.url),JSON.stringify({scope:'PGlite real SQL; Auth fixture records; not a cloud or physical phone test',at:new Date().toISOString(),passed:results.filter(x=>x.pass).length,failed:results.filter(x=>!x.pass).length,results},null,2));await db.close();}
