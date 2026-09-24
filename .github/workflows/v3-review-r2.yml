@@ -31,9 +31,6 @@ jobs:
           target=next(i for i,x in enumerate(lines) if x.startswith(" const today="))
           lines.insert(target,line)
           p.write_text(''.join(lines))
-          p=Path('.github/workflows/v3-native.yml');s=p.read_text()
-          s=s.replace('npm --prefix v3 install','npm --prefix v3 ci')
-          p.write_text(s)
       - name: Install locked dependencies and check source
         working-directory: v3
         run: |
@@ -52,27 +49,25 @@ jobs:
         run: |
           node scripts/fetch-vendor.mjs
           node scripts/build.mjs --demo
-      - name: Commit only fixture and deterministic dependency change
+      - name: Commit only verified test fixture
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- v3/tests/native.mjs .github/workflows/v3-native.yml
+          git add -- v3/tests/native.mjs
           if ! git diff --cached --quiet; then
             git commit -m '修正 V3 原生測試前置切換順序；保留正式切換保護'
             git push origin HEAD:v3/field-operations
           fi
           gh workflow run v3-native.yml --ref v3/field-operations
-      - name: Package versioned source and isolated local test dependencies
+      - name: Package versioned source and local preview
         if: always()
         run: |
           mkdir -p /tmp/pulso-r2
           git archive --format=zip HEAD -o /tmp/pulso-r2/source.zip
           git rev-parse HEAD > /tmp/pulso-r2/SOURCE_SHA.txt
-          if [ -d v3/node_modules ]; then tar -czf /tmp/pulso-r2/test-dependencies.tar.gz -C v3 node_modules; fi
           if [ -d v3/preview ]; then tar -czf /tmp/pulso-r2/preview.tar.gz -C v3 preview; fi
-          if [ -d v3/web/vendor ]; then tar -czf /tmp/pulso-r2/vendor.tar.gz -C v3/web vendor; fi
       - uses: actions/upload-artifact@v7.0.0
         if: always()
         with:
