@@ -19,9 +19,11 @@ def check(name,fn):
 def no_overflow(page):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 def click_action(page,action,id=None):
+    page.wait_for_function("document.querySelector('#app')?.getAttribute('aria-busy') !== 'true'")
     selector='[data-action="'+action+'"]'+('[data-id="'+id+'"]' if id else '')
     page.locator(selector+':visible').first.click()
 def nav(page,id):
+    page.wait_for_function("document.querySelector('#app')?.getAttribute('aria-busy') !== 'true'")
     mobile=page.locator('#mobile-nav')
     if mobile.is_visible(): mobile.select_option(id)
     else:click_action(page,'nav',id)
