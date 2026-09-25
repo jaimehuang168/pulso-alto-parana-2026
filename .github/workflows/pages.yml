@@ -103,7 +103,21 @@ jobs:
           pathlib.Path('web/v3-release.json').write_text(json.dumps(data,indent=2))
           pathlib.Path('/tmp/pulso-v3-release/release.json').write_text(json.dumps(data,indent=2))
           PY
-          echo '原始 V2 根目錄保留。V3 靜態入口不等於正式後端已升級；展示版不连接正式資料庫。' >> "$GITHUB_STEP_SUMMARY"
+          echo '原始 V2 根目錄保留。V3 靜態入口不等於正式後端已升級；展示版不連接正式資料庫。' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build read-only live monitor and isolated synthetic live demonstration
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          npm --prefix v3 ci
+          node --test v3/tests/live-core.test.mjs
+          node v3/tests/live-board.mjs
+          node v3/live/build.mjs
+          python - <<'PY'
+          import json,pathlib,subprocess,hashlib
+          d={'feature':'pulso-live-1','source_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'backend_changed_by_this_deploy':False,'required_migrations':[9,10],'live_demo_is_synthetic':True}
+          d['files']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for folder in ['web/live','web/live-demo'] for p in pathlib.Path(folder).iterdir() if p.is_file()}
+          pathlib.Path('web/live-release.json').write_text(json.dumps(d,indent=2))
+          PY
+          echo '新增 /live/ 與 /live-demo/。不執行正式SQL、不開收、不變更發布授權。' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.0
         if: steps.check.outputs.ready == 'true'
         with:
@@ -128,7 +142,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v5.0.1
       - name: Report deployment boundary
-        run: echo '前端已發布。正式 Supabase V3 安裝、真實備份與實體手機驗收仍由已授權擁有者完成。' >> "$GITHUB_STEP_SUMMARY"
+        run: echo '前端已發布。正式Supabase增量安裝、備份及實體手機驗收仍需獨立完成。' >> "$GITHUB_STEP_SUMMARY"
   smoke:
     needs: deploy
     runs-on: ubuntu-24.04
@@ -148,10 +162,11 @@ jobs:
           for n in range(30):
             try:
               r=json.load(urllib.request.urlopen(base+'v3-release.json?check='+str(time.time()),timeout=15))
-              if r['source_commit']=='fcb9187f556369a1437af24c96b67cad25e67653':break
+              live=json.load(urllib.request.urlopen(base+'live-release.json?check='+str(time.time()),timeout=15))
+              if r['source_commit']=='fcb9187f556369a1437af24c96b67cad25e67653' and live['feature']=='pulso-live-1':break
             except Exception:pass
             time.sleep(3)
-          else:raise RuntimeError('The pinned release manifest is not published yet')
+          else:raise RuntimeError('The release manifests are not published yet')
           checks=[]
           with sync_playwright() as p:
             browser=p.chromium.launch()
@@ -161,8 +176,7 @@ jobs:
             assert response.status==200;checks.append({'name':'Original V2 login remains published','pass':True})
             response=page.goto(base+'v3/',wait_until='domcontentloaded');page.locator('#login-form').wait_for(timeout=30000)
             assert response.status==200 and page.get_by_role('button',name='Administrador',exact=True).count()==0
-            checks.append({'name':'V3 private route renders login without demo role buttons','pass':True})
-            # The simulation must work even with every hosted Supabase call blocked.
+            checks.append({'name':'V3 private login still renders','pass':True})
             page.route('**/*.supabase.co/**',lambda route:route.abort())
             response=page.goto(base+'v3-demo/',wait_until='domcontentloaded');assert response.status==200
             page.get_by_role('button',name='Administrador',exact=True).wait_for(timeout=120000)
@@ -170,13 +184,30 @@ jobs:
             page.get_by_role('heading',name='Centro de operación',exact=True).wait_for(timeout=45000)
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth+1')
             page.screenshot(path='evidence/v3-demo-admin-mobile.png',full_page=True)
-            checks.append({'name':'Published subdirectory demo loads PGlite and scoped mobile admin screen','pass':True})
+            checks.append({'name':'Existing V3 demo admin still operates','pass':True})
             page.locator('[data-action="logout"]:visible').first.click()
             page.get_by_role('button',name='Viewer CDE',exact=True).click()
             page.get_by_role('heading',name='Acceso a resultados pendiente',exact=True).wait_for(timeout=20000)
-            checks.append({'name':'Published demo viewer remains restricted','pass':True})
+            checks.append({'name':'Existing demo Viewer remains restricted','pass':True})
+            page.set_viewport_size({'width':1920,'height':1080})
+            response=page.goto(base+'live-demo/',wait_until='domcontentloaded');assert response.status==200
+            page.locator('.city-card').first.wait_for(timeout=20000)
+            assert page.locator('.city-card').count()==4
+            assert page.evaluate("document.documentElement.scrollHeight<=innerHeight+1 && [...document.querySelectorAll('.candidate-list')].every(e=>e.scrollHeight<=e.clientHeight+1)")
+            checks.append({'name':'Published live four-city monitor fits one 1080p screen','pass':True})
+            page.screenshot(path='evidence/live-four-cities.png',full_page=True)
+            before=page.locator('[data-city=cde] .metric b').first.inner_text()
+            page.wait_for_timeout(6200)
+            assert before!=page.locator('[data-city=cde] .metric b').first.inner_text()
+            checks.append({'name':'Published synthetic counts update without ending the survey','pass':True})
+            page.locator('button[data-city=minga]').click()
+            assert page.locator('.city-card').count()==1 and page.locator('.candidate-line').count()==4
+            checks.append({'name':'Published single-city selection works','pass':True})
+            page.goto(base+'live/',wait_until='domcontentloaded');page.locator('#access:not([hidden]) #login-form').wait_for(timeout=20000)
+            assert page.locator('.candidate-line').count()==0
+            checks.append({'name':'Private live route demands login and never substitutes demo answers','pass':True})
             browser.close()
-          pathlib.Path('evidence/published-smoke.json').write_text(json.dumps({'scope':'Public static routes and browser-local synthetic demo only; no production login or database write','source_commit':r['source_commit'],'passed':len(checks),'failed':0,'checks':checks},indent=2))
+          pathlib.Path('evidence/published-smoke.json').write_text(json.dumps({'scope':'Published static routes and synthetic browser demos only; no production login or writes','source_commit':live['source_commit'],'passed':len(checks),'failed':0,'checks':checks},indent=2))
           print(json.dumps(checks,indent=2))
           PY
       - uses: actions/upload-artifact@v7.0.0

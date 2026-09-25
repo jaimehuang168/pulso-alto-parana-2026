@@ -1,0 +1,75 @@
+name: Live monitor verification
+on:
+  push:
+    branches: ['v3/live-monitor']
+    paths: ['.github/workflows/live-monitor.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: live-monitor-review
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: v3/live-monitor
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Apply bounded reader and exact reviewed source corrections
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('v3/live/app.mjs');s=p.read_text()
+          if "import {LiveReader} from './reader.mjs';" not in s:
+            assert ',LiveReader,escape}' in s
+            s="import {LiveReader} from './reader.mjs';\n"+s.replace(',LiveReader,escape}',',escape}',1);p.write_text(s)
+          PY
+          python v3/live/review-final.py
+      - name: Locked dependencies and independent regression layers
+        run: |
+          npm --prefix v3 ci
+          mkdir -p v3/evidence
+          node --test tests/*.cjs > v3/evidence/live-v2-regression.txt
+          python tests/import_package_test.py
+          node --check v3/live/app.mjs
+          node --test v3/tests/live-core.test.mjs > v3/evidence/live-core.txt
+          node v3/tests/live-board.mjs
+          node v3/live/build.mjs
+      - name: Real browser engines
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: HTTP four-city and single-city monitor tests
+        run: python v3/tests/live-browser.py
+      - name: Commit only tested source corrections
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- v3/live/app.mjs v3/live/core.mjs
+          if ! git diff --cached --quiet; then
+            git commit -m '修正即時看板輸出快照檔名、HTTP授權失效與長名單顯示'
+            git push origin HEAD:v3/live-monitor
+          fi
+      - name: Record deliverable source and honest test scope
+        if: always()
+        run: |
+          mkdir -p /tmp/live-delivery
+          git rev-parse HEAD > /tmp/live-delivery/SOURCE_SHA.txt
+          git archive --format=zip HEAD -o /tmp/live-delivery/source.zip
+          cp -r v3/evidence /tmp/live-delivery/evidence
+          if [ -d web/live ]; then cp -r web/live /tmp/live-delivery/; fi
+          if [ -d web/live-demo ]; then cp -r web/live-demo /tmp/live-delivery/; fi
+          if [ -f web/Pulso_LIVE_DEMO_ES.html ]; then cp web/Pulso_LIVE_DEMO_ES.html /tmp/live-delivery/; fi
+          echo 'PGlite SQL + synthetic Auth sessions; Chromium/WebKit HTTP demo. No hosted Supabase login, migration or survey writes.' > /tmp/live-delivery/SCOPE.txt
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-live-monitor-reviewed
+          path: /tmp/live-delivery/
+          retention-days: 14
