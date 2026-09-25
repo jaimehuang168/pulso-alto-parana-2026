@@ -1,0 +1,15 @@
+import {database,as,admin,adminSession} from './db-fixture.mjs';import fs from 'node:fs/promises';import assert from 'node:assert/strict';import{randomUUID}from'node:crypto';
+const db=await database(),results=[],u=randomUUID(),sid=randomUUID();
+const rpc=async(name,args=[],user=admin,session=adminSession)=>Object.values((await as(db,user,session,`select public.${name}(${args.map((_,i)=>'$'+(i+1)).join(',')})`,args))[0])[0];
+const test=async(name,f)=>{try{await f();results.push({name,pass:true});}catch(e){results.push({name,pass:false,error:e.message});throw e;}};
+try{
+ for(const file of['009_v3_reports.sql','010_v3_live_board.sql','011_v3_live_console.sql'])await db.exec(await fs.readFile(new URL('../../supabase/migrations/'+file,import.meta.url),'utf8'));
+ await test('Admin state returns four cities without creating fieldwork or enabling external results',async()=>{const s=await rpc('v3_live_admin_state');assert.equal(s.cities.length,4);assert.equal(s.operation.phase,'setup');assert.equal(s.policy.enabled,false);});
+ await test('Addon 011 can be repeated without removing its bounded wrapper',async()=>{await db.exec(await fs.readFile(new URL('../../supabase/migrations/011_v3_live_console.sql',import.meta.url),'utf8'));assert.equal((await rpc('v3_live_admin_state')).schema,'pulso-live-admin-1');});
+ await db.query('insert into auth.users(id,email) values($1,$2)',[u,'viewer@synthetic.invalid']);await db.query('insert into auth.sessions values($1,$2)',[sid,u]);await db.query("insert into pulso_v3.actors(user_id,code,display_name,role,enrolled) values($1,'VIEW-CONSOLE','Synthetic viewer','viewer',true)",[u]);
+ await test('Viewer cannot access private aliases or administration state',async()=>{await assert.rejects(rpc('v3_live_admin_state',[],u,sid),/ADMIN_ONLY/);});
+ await rpc('v3_command',['grant.save',{user_id:u,district_id:'cde',capabilities:['view_results'],valid_until:new Date(Date.now()+9000).toISOString()},randomUUID(),0]);
+ let boot=await rpc('v3_bootstrap');await rpc('v3_command',['viewer.access',{enabled:true,reason:'Isolated short grant test'},randomUUID(),boot.operation.revision]);
+ await test('External display validity never exceeds the last surviving city grant',async()=>{const b=await rpc('v3_live_board',['released',null],u,sid);assert.equal(b.cities.length,1);assert(Date.parse(b.valid_until)-Date.parse(b.server_time)<10000);assert(b.cities.every(c=>c.counts===null));});
+ await test('Console and wrapped reader deny anonymous SQL role',async()=>{await assert.rejects(db.query('set role anon;select public.v3_live_admin_state()'));await db.exec('reset role');await assert.rejects(db.query('set role anon;select public.v3_live_board()'));await db.exec('reset role');});
+}catch(e){console.error(e.message);process.exitCode=1;}finally{await fs.mkdir(new URL('../evidence/',import.meta.url),{recursive:true});await fs.writeFile(new URL('../evidence/live-console-sql.json',import.meta.url),JSON.stringify({scope:'PGlite real SQL; synthetic Auth fixture',passed:results.filter(x=>x.pass).length,failed:results.filter(x=>!x.pass).length,results},null,2));await db.close();}
