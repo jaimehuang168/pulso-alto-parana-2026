@@ -1,5 +1,6 @@
+import {sanitizeStorage} from './storage-diagnostic.mjs?v=pruebas-2';
 /** Read-only acceptance helpers. Never submit surveys or call activation. */
-export const VERSION='pruebas-1';
+export const VERSION='pruebas-2';
 export const READ_RPCS=new Set(['v3_bootstrap','v3_preflight','v3_live_board','v3_live_admin_state']);
 export const MANUAL=['keyboard','single_city','four_cities','orientation','return_to_app','downloads','live_write','offline_queue','role_scope'];
 export function validateConfig(c){
@@ -32,6 +33,6 @@ export function safeCheck(id,status,detail,ms=0){
  return {id,status,detail:String(detail||'').slice(0,240),duration_ms:Math.max(0,Math.round(ms))};
 }
 export function verdict(checks){return checks.some(c=>c.status==='fail')?'FALLA_REVISAR':checks.some(c=>c.status==='blocked')?'PARCIAL_REQUIERE_REVISION':checks.some(c=>c.status==='pass')?'LECTURA_VERIFICADA_NO_ES_APROBACION_FINAL':'SIN_EJECUTAR';}
-export function record(checks,manual,device,physical){
- return {schema:'pulso-pruebas-1',at:new Date().toISOString(),scope:'Read-only diagnostics with actual operator login. No survey insertion, activation, backup or billing mutation.',result:verdict(checks),checks:checks.map(c=>safeCheck(c.id,c.status,c.detail,c.duration_ms)),manual:MANUAL.map(id=>({id,result:['pass','fail','not_applicable'].includes(manual[id])?manual[id]:'untested'})),device:{width:device.width,height:device.height,pixel_ratio:device.pixel_ratio,secure:device.secure,touch:device.touch},physical_device_reported_by_operator:physical===true,automated_physical_certification:false,survey_write_test_completed_by_this_page:false,production_activation_approved:false};
+export function record(checks,manual,device,physical,storage=null){
+ return {schema:'pulso-pruebas-2',storage_diagnostic:sanitizeStorage(storage),at:new Date().toISOString(),scope:'Read-only diagnostics with actual operator login. No survey insertion, activation, backup or billing mutation.',result:verdict(checks),checks:checks.map(c=>safeCheck(c.id,c.status,c.detail,c.duration_ms)),manual:MANUAL.map(id=>({id,result:['pass','fail','not_applicable'].includes(manual[id])?manual[id]:'untested'})),device:{width:device.width,height:device.height,pixel_ratio:device.pixel_ratio,secure:device.secure,touch:device.touch},physical_device_reported_by_operator:physical===true,automated_physical_certification:false,survey_write_test_completed_by_this_page:false,production_activation_approved:false};
 }
