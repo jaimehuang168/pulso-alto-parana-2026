@@ -1,0 +1,96 @@
+name: Storage and statistics targeted review
+on:
+  push:
+    branches: ['fix/storage-statistics-r2']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: storage-statistics-review-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Locked dependencies and source tests
+        run: |
+          mkdir -p audit-evidence
+          npm --prefix v3 ci
+          node --test tests/*.cjs | tee audit-evidence/unit.log
+          python tests/import_package_test.py
+          node v3/scripts/check.mjs
+          node --test v3/tests/*.test.mjs | tee audit-evidence/v3-unit.log
+          node v3/tests/database.mjs
+          node v3/tests/enrollment.mjs
+          node v3/tests/review.mjs
+          node v3/tests/live-board.mjs
+          node v3/tests/live-console-sql.mjs
+          node v3/tests/statistics-review.mjs
+      - name: Build isolated browser fixtures from committed source only
+        run: |
+          node v3/scripts/fetch-vendor.mjs
+          node v3/scripts/build.mjs --demo
+          node v3/scripts/build.mjs
+          mkdir -p web/v3
+          cp -a v3/dist/. web/v3/
+          node v3/live/build.mjs
+          node scripts/prepare-pruebas.mjs
+      - name: Install actual browser engines
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Read-only center with explicit Auth fixtures
+        continue-on-error: true
+        run: PULSO_TEST_EVIDENCE=audit-evidence/readiness python tests/quick-readiness-browser.py
+      - name: Actual IndexedDB, separate blocked cleanup and device layouts
+        continue-on-error: true
+        run: python tests/storage-browser.py
+      - name: Monitor buttons, independent city rendering and file exports
+        continue-on-error: true
+        run: python v3/tests/live-browser.py
+      - name: Build local-only delay and lost-receipt test instrumentation
+        run: |
+          cd v3
+          node --input-type=module - <<'JS'
+          import {build} from 'esbuild';
+          await build({entryPoints:['tests/capture-audit-harness.mjs'],outfile:'preview/simulation.mjs',bundle:true,format:'esm',platform:'browser',target:'es2022'});
+          JS
+      - name: Actual capture buttons, encrypted outbox, offline retry and totals
+        continue-on-error: true
+        run: python v3/tests/capture-audit-browser.py
+      - name: Strict targeted verdict
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,pathlib,sys
+          paths=['audit-evidence/readiness/browser-tests.json','audit-evidence/storage-browser/results.json','audit-evidence/capture-browser/results.json','v3/evidence/live-http-browser.json','v3/evidence/statistics-review.json']
+          results=[]
+          for name in paths:
+            p=pathlib.Path(name)
+            if not p.exists():results.append({'file':name,'pass':False,'reason':'missing evidence'});continue
+            d=json.loads(p.read_text());results.append({'file':name,'pass':d.get('failed')==0 and d.get('passed',0)>0,'passed':d.get('passed',0),'failed':d.get('failed',0)})
+          root=pathlib.Path('audit-evidence');root.mkdir(exist_ok=True)
+          passed=all(r['pass'] for r in results)
+          (root/'verdict.json').write_text(json.dumps({'pass':passed,'scope':'Isolated SQL and real browser engines; explicitly synthetic Auth. Not hosted production or physical Android/iPhone.','checks':results},indent=2))
+          print(json.dumps(results,indent=2));sys.exit(0 if passed else 1)
+          PY
+      - name: Record exact source and sanitized evidence only
+        if: always()
+        run: |
+          mkdir -p audit-evidence
+          git rev-parse HEAD > audit-evidence/SOURCE_SHA.txt
+          git archive --format=zip HEAD -o audit-evidence/source.zip
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-storage-statistics-review
+          path: |
+            audit-evidence/
+            v3/evidence/
+          retention-days: 7

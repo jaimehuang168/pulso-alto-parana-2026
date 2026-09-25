@@ -12,5 +12,5 @@ for(const folder of ['v3','live']){
  if(folder==='v3')await fs.writeFile(path.join(out,'config.js'),"window.PULSO_V3_CONFIG={supabaseUrl:'',publishableKey:'',simulation:false};\n");
 }
 const hashes={};for(const f of ['v3/app.js','live/live.js','live/control.js']){const a=await fs.readFile(path.join(web,f)),b=await fs.readFile(path.join(dest,f));if(!a.equals(b))throw Error('RUNTIME_CHANGED');hashes[f]=crypto.createHash('sha256').update(b).digest('hex');}
-await fs.writeFile(path.join(web,'pruebas/build-info.json'),JSON.stringify({feature:'pruebas-1',runtime_is_unchanged:true,creates_projects:false,changes_billing:false,activates_production:false,source_runtime_hashes:hashes},null,2));
+await fs.writeFile(path.join(web,'pruebas/build-info.json'),JSON.stringify({feature:'pruebas-2',runtime_is_unchanged:true,creates_projects:false,changes_billing:false,activates_production:false,source_runtime_hashes:hashes},null,2));
 console.log('Read-only center and existing-project trial entry prepared. No backend changes.');
