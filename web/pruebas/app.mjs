@@ -20,7 +20,7 @@ async function deviceTests(){await run('browser.secure',async()=>{if(!isSecureCo
 async function rpc(name,args={}){permittedRpc(name);const {data,error}=await client.rpc(name,args).abortSignal(AbortSignal.timeout(20000));if(error)throw error;return data;}
 async function probe(){
  await run('rpc.bootstrap',async()=>{const b=await rpc('v3_bootstrap',{p_client:30000});if(!['admin','viewer','interviewer','coordinator'].includes(b?.actor?.role))throw Error('RESPONSE_INVALID');role=b.actor.role;return 'Ingreso real habilitado. Rol: '+b.actor.role+'. No se exportan nombres ni respuestas.';});
- if(!role)return;
+ if(!role){message('La sesión respondió, pero el App no autorizó la lectura. Revise rpc.bootstrap; no se realizaron cambios.');return;}
  if(role==='admin'){
   await run('rpc.preflight',async()=>JSON.stringify(summarizePreflight(await rpc('v3_preflight'))));
   await run('rpc.live_admin',async()=>{const b=await rpc('v3_live_admin_state');if(!b?.operation||!Array.isArray(b.cities))throw Error('RESPONSE_INVALID');return 'Control de administración legible. Ciudades configuradas: '+b.cities.length;});
