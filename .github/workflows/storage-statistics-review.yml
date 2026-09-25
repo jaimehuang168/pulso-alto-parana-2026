@@ -54,6 +54,9 @@ jobs:
       - name: Monitor buttons, independent city rendering and file exports
         continue-on-error: true
         run: python v3/tests/live-browser.py
+      - name: Cross-engine official clock and unchanged UTC exports
+        continue-on-error: true
+        run: python v3/tests/time-display-browser.py
       - name: Build local-only delay and lost-receipt test instrumentation
         run: |
           cd v3
@@ -69,7 +72,7 @@ jobs:
         run: |
           python - <<'PY'
           import json,pathlib,sys
-          paths=['audit-evidence/readiness/browser-tests.json','audit-evidence/storage-browser/results.json','audit-evidence/capture-browser/results.json','v3/evidence/live-http-browser.json','v3/evidence/statistics-review.json']
+          paths=['audit-evidence/readiness/browser-tests.json','audit-evidence/storage-browser/results.json','audit-evidence/capture-browser/results.json','audit-evidence/time-browser/results.json','v3/evidence/live-http-browser.json','v3/evidence/statistics-review.json']
           results=[]
           for name in paths:
             p=pathlib.Path(name)

@@ -1,3 +1,4 @@
+import {formatAsuncion} from './asuncion-time.mjs';
 /** Pure validation: Spanish UI, immutable payloads, no voter identifiers. */
 export const CLIENT=30000, VERSION='3.0.0-rc.1';
 export const CITIES=[{id:'cde',name:'Ciudad del Este',code:'CDE'},{id:'minga',name:'Minga Guazú',code:'MGA'},{id:'hernandarias',name:'Hernandarias',code:'HER'},{id:'franco',name:'Presidente Franco',code:'PFR'}];
@@ -9,7 +10,7 @@ export const uuid=()=>crypto.randomUUID();
 export const uuidOK=v=>typeof v==='string'&&/^[a-f\d]{8}-[a-f\d]{4}-[1-8][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i.test(v);
 export const city=id=>CITIES.find(d=>d.id===id)?.name||id||'—';
 export const num=n=>new Intl.NumberFormat('es-PY').format(Number(n)||0);
-export const time=x=>{if(!x)return '—';const d=new Date(x);return Number.isFinite(d.getTime())?new Intl.DateTimeFormat('es-PY',{timeZone:'America/Asuncion',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d):'Hora no válida';};
+export const time=x=>{if(!x)return '—';const d=new Date(x);return Number.isFinite(d.getTime())?formatAsuncion(d,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'Hora no válida';};
 export const percent=(n,base)=>base>0?new Intl.NumberFormat('es-PY',{maximumFractionDigits:1}).format(n/base*100)+' %':'Sin base';
 export function canonical(value){if(value===null||typeof value!=='object')return JSON.stringify(value);if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';}
 export async function digest(text){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(b=>b.toString(16).padStart(2,'0')).join('');}

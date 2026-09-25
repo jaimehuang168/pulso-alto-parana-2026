@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {formatAsuncion} from '../web/modules/asuncion-time.mjs';import {clock} from '../live/core.mjs';import {time} from '../web/modules/core.mjs';
+const opts={hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'};
+test('September 2026 uses actual Paraguay UTC-3, not obsolete winter UTC-4',()=>assert.equal(formatAsuncion('2026-09-25T18:04:25Z',opts),'15:04:25'));
+test('All months of the 2026 operation retain UTC-3',()=>{for(let m=1;m<=12;m++)assert.equal(formatAsuncion(`2026-${String(m).padStart(2,'0')}-15T12:34:56Z`,opts),'09:34:56');});
+test('Cross-midnight display changes date without changing the source instant',()=>{const d=new Date('2026-09-25T02:30:00Z'),stamp=d.getTime(),s=formatAsuncion(d,{...opts,year:'numeric',month:'2-digit',day:'2-digit'});assert(s.includes('24/09/2026'));assert(s.includes('23:30:00'));assert.equal(d.getTime(),stamp);});
+test('Explicit timestamp offsets represent the same instant',()=>assert.equal(formatAsuncion('2026-10-04T09:30:00-03:00',opts),formatAsuncion('2026-10-04T12:30:00Z',opts)));
+test('Caller cannot override the operation display zone',()=>assert.equal(formatAsuncion('2026-09-25T18:04:25Z',{...opts,timeZone:'UTC'}),'15:04:25'));
+test('Bad dates are not silently converted into a clock',()=>assert.throws(()=>formatAsuncion('not a date',opts),RangeError));
+test('Pre-transition dates still use the historical Asuncion rules',()=>assert.equal(formatAsuncion('2024-09-25T18:04:25Z',opts),'14:04:25'));
+test('Published App and live helper use the same corrected display',()=>{assert.equal(clock('2026-09-25T18:04:25Z'),'15:04:25');assert(time('2026-09-25T18:04:25Z').includes('15:04:25'));});
