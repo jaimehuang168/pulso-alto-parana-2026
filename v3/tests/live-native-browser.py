@@ -23,6 +23,7 @@ def enable_all():
 def login(page,credentials):
  form=page.locator('#login-form');form.wait_for(state='visible',timeout=20000);form.locator('[name=code]').fill(credentials['code']);form.locator('[name=password]').fill(credentials['password']);form.locator('button[type=submit]').click()
 def ready(page):page.locator('.candidate-line').first.wait_for(timeout=20000)
+def field_done(page):page.wait_for_function("document.querySelector('#app')?.getAttribute('aria-busy')!=='true'",timeout=25000)
 def busy_done(page):
  # Report-row actions are not forms; the console locks all buttons for both paths.
  page.wait_for_function("document.querySelector('#reload')?.disabled !== true && !document.querySelector('form[aria-busy=true]')",timeout=25000)
@@ -39,15 +40,19 @@ with sync_playwright() as pw:
    browser=getattr(pw,engine).launch();admin_ctx=browser.new_context(viewport={'width':1920,'height':1080},locale='es-PY',timezone_id='America/Asuncion');a=admin_ctx.new_page();a.goto(BASE+'/live/?view=internal');login(a,f['admin']);ready(a)
    check(engine+' native administrator sees true synthetic names during running fieldwork','Candidatura DEMO' in a.locator('#board').inner_text() and a.locator('.city-card').count()==4)
    before=int_text(a.locator('[data-city=cde] .metrics .metric b').first)
-   if engine=='webkit':cmd('assignment.create',{'person_id':f['worker']['person'],'point_id':f['worker']['point'],'reason':'Second native browser capture task'})
+   task=f['worker']['task']
+   if engine=='webkit':task=cmd('assignment.create',{'person_id':f['worker']['person'],'point_id':f['worker']['point'],'reason':'Second native browser capture task'})['id']
    mobile=browser.new_context(**pw.devices['iPhone 13' if engine=='webkit' else 'Pixel 5'],locale='es-PY',timezone_id='America/Asuncion');w=mobile.new_page();w.goto(BASE+'/v3/');login(w,f['worker'])
    w.locator('#vault-form').wait_for(timeout=20000);w.locator('#vault-form [name=phrase]').fill('Synthetic mobile acceptance vault 2026')
    if w.locator('#vault-form [name=repeat]').count():w.locator('#vault-form [name=repeat]').fill('Synthetic mobile acceptance vault 2026')
-   w.locator('#vault-form button').click();w.locator('[data-action=task-ack]').wait_for(timeout=20000);w.locator('[data-action=task-ack]').click();w.locator('[data-action=task-start]').wait_for(timeout=20000);w.locator('[data-action=task-start]').click();w.locator('#capture-form').wait_for(timeout=20000)
+   w.locator('#vault-form button').click();ack=w.locator('[data-action=task-ack][data-id="'+task+'"]');ack.wait_for(timeout=20000);ack.click();field_done(w);start=w.locator('[data-action=task-start][data-id="'+task+'"]');start.wait_for(timeout=20000);start.click();w.locator('#capture-form').wait_for(timeout=20000)
    check(engine+' actual field App displays only assigned CDE candidates',w.locator('.choice[data-outcome=candidate]').count()==2)
-   w.locator('[name=voted]').check();w.locator('[name=consent]').check();w.locator('.choice[data-outcome=candidate]').first.click();w.locator('#capture-form button[type=submit]').click();w.wait_for_function("document.querySelector('#app')?.getAttribute('aria-busy')!=='true'");w.locator('#mobile-nav').select_option('queue');w.get_by_text('Aceptada',exact=True).wait_for(timeout=20000)
+   w.locator('[name=voted]').check();w.locator('[name=consent]').check();w.locator('.choice[data-outcome=candidate]').first.click();w.locator('#capture-form button[type=submit]').click();field_done(w);w.locator('#mobile-nav').select_option('queue');w.get_by_text('Aceptada',exact=True).wait_for(timeout=20000)
    a.wait_for_function("old=>Number(document.querySelector('[data-city=cde] .metrics .metric b').textContent.replace(/[^0-9]/g,''))>old",arg=before,timeout=15000)
    check(engine+' real App HTTP submission updates another logged-in monitor without reload',int_text(a.locator('[data-city=cde] .metrics .metric b').first)==before+1)
+   # A second device must not silently take over the previous active session.
+   field_done(w);w.locator('#mobile-nav').select_option('task');w.on('dialog',lambda d:d.accept());finish=w.locator('[data-action=finish-my-task][data-id="'+task+'"]');finish.wait_for(timeout=20000);finish.click();field_done(w)
+   tasks=rpc('v3_bootstrap')['assignments'];check(engine+' worker finishes the current task through the App before device handover',next(t for t in tasks if t['id']==task)['status']=='draining')
    a.locator('#audience').select_option('codes');a.wait_for_function("!document.querySelector('#board').textContent.includes('Candidatura') && document.querySelector('.candidate-name')?.textContent.trim()==='CDE-A'");check(engine+' codes-only switch removes all real names from displayed DOM','Lista DEMO' not in a.locator('#board').inner_text())
    for width,height in [(320,740),(390,844),(844,390),(768,1024),(1024,768),(1366,768),(1920,1080),(3840,2160)]:
     a.set_viewport_size({'width':width,'height':height});check(engine+f' responsive native monitor {width}x{height}',a.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
