@@ -62,7 +62,8 @@ export function exportCSV(data,id,demonstration=false){
 }
 export function exportSVG(data,id,demonstration=false,fresh=true){
  validate(data);const cities=selected(data,id);if(!cities.length)throw new Error('LIVE_NO_DATA');const four=cities.length>1;
- const W=1920,H=four?1180:1080,margin=48,cols=four?2:1,gap=30,cw=(W-2*margin-gap*(cols-1))/cols,ch=four?444:720;
+ const extra=Math.max(0,...cities.map(c=>c.candidates.length-4)),stepExtra=extra*(four?64:102);
+ const W=1920,H=(four?1180:1080)+stepExtra*(four?2:1),margin=48,cols=four?2:1,gap=30,cw=(W-2*margin-gap*(cols-1))/cols,ch=(four?444:720)+stepExtra;
  const txt=(x,y,s,size=24,fill='#c7d6e4',weight=400)=>`<text x="${x}" y="${y}" fill="${fill}" font-size="${size}" font-weight="${weight}">${escape(s)}</text>`;
  let body='';cities.forEach((c,idx)=>{const x=margin+(idx%cols)*(cw+gap),y=208+Math.floor(idx/cols)*(ch+gap);body+=`<g transform="translate(${x} ${y})"><rect width="${cw}" height="${ch}" rx="22" fill="#132434" stroke="#304353"/>`+txt(28,48,c.city,32,'#f5f8fc',750)+txt(cw-132,48,c.city_code,22,'#64dbca',700);
   if(!c.counts){body+=txt(30,150,{codes_pending:'Códigos pendientes',catalog_pending:'Catálogo pendiente',withheld:'Visualización no autorizada',suppressed:'Detalle reservado'}[c.state],29)+txt(30,203,'Sin datos publicables. No equivale a 0 votos.',23);}
@@ -74,17 +75,4 @@ export function exportSVG(data,id,demonstration=false,fresh=true){
  });
  const tag=demonstration?'DEMOSTRACIÓN · DATOS FICTICIOS':data.private?'USO INTERNO · NO DIFUNDIR':'CANAL AUTORIZADO · SOLO CÓDIGOS';
  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="font-family:Arial,sans-serif"><rect width="${W}" height="${H}" fill="#081622"/><rect x="48" y="35" width="8" height="58" rx="4" fill="#64dbca"/>${txt(80,86,'BOCA DE URNA',57,'#f5f8fc',800)}${txt(80,137,'ALTO PARANÁ · '+(four?'CUATRO CIUDADES':cities[0].city.toLocaleUpperCase('es')),25)}${txt(1240,74,'CORTE '+clock(data.server_time),31,'#64dbca',700)}${txt(1240,112,fresh?'CAPTURA DEL MONITOR':'CAPTURA SIN ACTUALIZAR',21)}${txt(48,181,tag,21,'#f6cd6a',700)}${body}${txt(48,H-41,'Muestra parcial no ponderada · No es escrutinio ni resultado oficial. Cada ciudad tiene su propio denominador.',22)}</svg>`;
-}
-/** Cancelable single-flight reader. Mode changes invalidate late old-mode responses. */
-export class LiveReader{
- constructor(fetcher,onData,onState,{now=()=>performance.now(),interval=5000}={}){Object.assign(this,{fetcher,onData,onState,now,interval});this.epoch=0;this.paused=false;this.lastSuccess=null;this.timer=null;this.controller=null;this.audience='auto';this.busy=false;}
- change(audience){this.epoch++;this.controller?.abort();clearTimeout(this.timer);this.busy=false;this.audience=audience;this.lastSuccess=null;this.onData(null);return this.refresh();}
- async refresh(){if(this.busy)return;clearTimeout(this.timer);this.busy=true;const epoch=this.epoch,mode=this.audience;const ctrl=new AbortController();this.controller=ctrl;this.onState('loading');const timeout=setTimeout(()=>ctrl.abort(),10000);
-  try{const value=validate(await this.fetcher(mode,ctrl.signal),mode);if(epoch!==this.epoch)return;this.lastSuccess=this.now();this.onData(value);this.onState(this.paused?'paused':'live');}
-  catch(e){if(epoch!==this.epoch)return;const raw=String(e?.message||'');const denied=e?.status===401||e?.status===403||/42501|SCOPE_DENIED|ADMIN_ONLY|ACCOUNT_DISABLED|SESSION_REQUIRED|VIEWER_RESULTS_PENDING|PGRST202|MIGRATION_REQUIRED/.test(raw+String(e?.code||''));if(denied){this.onData(null);this.lastSuccess=null;}this.onState(denied?'denied':'offline',e);}
-  finally{clearTimeout(timeout);if(epoch===this.epoch){this.busy=false;if(!this.paused)this.timer=setTimeout(()=>this.refresh(),this.interval);}}
- }
- pause(value){this.paused=value;clearTimeout(this.timer);if(value){this.epoch++;this.controller?.abort();this.busy=false;this.onState('paused');}else return this.refresh();}
- age(){return this.lastSuccess===null?Infinity:(this.now()-this.lastSuccess)/1000;}
- stop(){this.paused=true;this.epoch++;clearTimeout(this.timer);this.controller?.abort();this.busy=false;}
 }

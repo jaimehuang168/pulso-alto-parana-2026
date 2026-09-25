@@ -46,13 +46,13 @@ function render(){
 function pick(value,manual=true){city=value;if(manual&&rotating)rotate(false);render();try{const u=new URL(location.href);u.searchParams.set('city',value);history.replaceState(null,'',u);}catch{}}
 function rotate(value){rotating=value;clearInterval(rotationTimer);$('rotate').textContent=value?'■ Detener rotación':'↔ Rotación';$('rotate').classList.toggle('selected',value);if(value){const ids=display?.cities.map(c=>c.id)||[];if(!ids.length)return;if(city==='all')pick(ids[0],false);rotationTimer=setInterval(()=>{const current=display?.cities.map(c=>c.id)||[];if(current.length)pick(current[(current.indexOf(city)+1)%current.length],false);},15000);}}
 function download(text,name,type){const blob=text instanceof Blob?text:new Blob([text],{type}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),30000);}
-function filename(ext){return 'Pulso_'+(DEMO?'DEMO_':display.private?'PRIVADO_NO_DIFUNDIR_':'CODIGOS_AUTORIZADO_')+(city==='all'?'4_CIUDADES':CITIES.find(c=>c.id===city).code)+'_'+display.server_time.replace(/[^0-9]/g,'').slice(0,14)+'.'+ext;}
-async function png(){if(!display)return;try{const data=validate(display),svg=exportSVG(data,city,DEMO,!reader.paused&&reader.age()<15),url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml;charset=utf-8'}));
- try{const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('PNG_RENDER_FAILED'));img.src=url;});const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;canvas.getContext('2d').drawImage(img,0,0);const b=await new Promise(r=>canvas.toBlob(r,'image/png'));if(!b)throw new Error('PNG_RENDER_FAILED');download(b,filename('png'),'image/png');toast('PNG guardado como captura con hora. La pantalla continúa actualizándose.');}finally{URL.revokeObjectURL(url);}}
+function filename(ext,data=display,scope=city){return 'Pulso_'+(DEMO?'DEMO_':data.private?'PRIVADO_NO_DIFUNDIR_':'CODIGOS_AUTORIZADO_')+(scope==='all'?'4_CIUDADES':CITIES.find(c=>c.id===scope).code)+'_'+data.server_time.replace(/[^0-9]/g,'').slice(0,14)+'.'+ext;}
+async function png(){if(!display)return;try{const data=validate(display),scope=city,savedName=filename('png',data,scope),svg=exportSVG(data,scope,DEMO,!reader.paused&&reader.age()<15),url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml;charset=utf-8'}));
+ try{const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('PNG_RENDER_FAILED'));img.src=url;});const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;canvas.getContext('2d').drawImage(img,0,0);const b=await new Promise(r=>canvas.toBlob(r,'image/png'));if(!b)throw new Error('PNG_RENDER_FAILED');download(b,savedName,'image/png');toast('PNG guardado como captura con hora. La pantalla continúa actualizándose.');}finally{URL.revokeObjectURL(url);}}
  catch(e){toast('No se pudo crear el PNG. Use la captura SVG incluida en el paquete o informe a administración.');}}
 async function cloud(mode,signal){
- const {data,error}=await sb.rpc('v3_live_board',{p_audience:mode,p_district:null}).abortSignal(signal);
- if(error)throw Object.assign(new Error(error.message),error);return data;
+ const {data,error,status}=await sb.rpc('v3_live_board',{p_audience:mode,p_district:null}).abortSignal(signal);
+ if(error)throw Object.assign(new Error(error.message),error,{status});return data;
 }
 async function connectSignal(){
  if(!sb)return;const session=(await sb.auth.getSession()).data.session;if(!session?.access_token)return;
