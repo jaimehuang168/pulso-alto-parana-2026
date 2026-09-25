@@ -1,4 +1,5 @@
-import {CITIES,validate,card,selected,number,clock,exportCSV,exportSVG,LiveReader,escape} from './core.mjs';
+import {LiveReader} from './reader.mjs';
+import {CITIES,validate,card,selected,number,clock,exportCSV,exportSVG,escape} from './core.mjs';
 import {demoSource} from './demo.mjs';
 const DEMO=__LIVE_DEMO__;
 if(innerWidth>=1100)document.body.classList.add('tv');
