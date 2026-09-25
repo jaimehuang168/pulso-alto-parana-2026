@@ -1,0 +1,49 @@
+name: Hosted live readiness read-only
+on:
+  push:
+    branches: ['v3/live-integration']
+    paths: ['.github/workflows/live-hosted-readonly.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Read published public configuration and anonymously test only read RPCs
+        run: |
+          mkdir -p evidence
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs/promises';
+          const base='https://jaimehuang168.github.io/pulso-alto-parana-2026/';
+          const report={at:new Date().toISOString(),scope:'Published public configuration; anonymous read-only RPC probes and Edge OPTIONS. No passwords, user tokens, writes, migration or release changes.',checks:[]};
+          try{
+            const r=await fetch(base+'v3/config.js',{signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error('PUBLIC_CONFIG_HTTP_'+r.status);
+            const text=await r.text(),match=text.match(/^window\.PULSO_V3_CONFIG=(\{.*\});?\s*$/s);if(!match)throw Error('PUBLIC_CONFIG_FORMAT');
+            const config=JSON.parse(match[1]),url=new URL(config.supabaseUrl);
+            if(url.protocol!=='https:'||!/^[-a-z0-9]+\.supabase\.co$/.test(url.hostname)||config.simulation)throw Error('UNEXPECTED_PUBLIC_TARGET');
+            if(typeof config.publishableKey!=='string'||config.publishableKey.startsWith('sb_secret_'))throw Error('INVALID_PUBLIC_KEY');
+            if(config.publishableKey.startsWith('eyJ')){const payload=JSON.parse(Buffer.from(config.publishableKey.split('.')[1],'base64url').toString());if(payload.role!=='anon')throw Error('INVALID_PUBLIC_KEY_ROLE');}
+            const headers={apikey:config.publishableKey,'Content-Type':'application/json'};
+            for(const [name,args] of [['v3_bootstrap',{}],['v3_report_config',{p_questionnaire:null}],['v3_live_board',{}],['v3_live_admin_state',{}]]){
+              const response=await fetch(url.origin+'/rest/v1/rpc/'+name,{method:'POST',headers,body:JSON.stringify(args),signal:AbortSignal.timeout(15000)});const value=await response.json().catch(()=>({}));
+              report.checks.push({name,http_status:response.status,error_code:typeof value.code==='string'?value.code:null,api_function_missing:value.code==='PGRST202',anonymous_access_denied:!response.ok,returned_data_recorded:false});
+            }
+            const options=await fetch(url.origin+'/functions/v1/field-enrollment',{method:'OPTIONS',headers:{Origin:'https://jaimehuang168.github.io'},signal:AbortSignal.timeout(15000)});
+            report.checks.push({name:'field-enrollment preflight',http_status:options.status,origin_accepted:options.status===204});
+            report.backend_installation_observed=report.checks.slice(0,4).every(c=>c.error_code==='42501');
+            report.authenticated_production_acceptance_completed=false;
+            report.physical_mobile_acceptance_completed=false;
+          }catch(e){report.error=String(e.message).replace(/[A-Za-z0-9_=-]{45,}/g,'[redacted]').slice(0,180);}
+          await fs.writeFile('evidence/hosted-readonly.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
+          JS
+      - uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pulso-hosted-readonly
+          path: evidence/
+          retention-days: 14

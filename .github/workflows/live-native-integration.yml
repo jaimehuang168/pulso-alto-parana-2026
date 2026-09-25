@@ -1,0 +1,133 @@
+name: Live reports native integration
+on:
+  push:
+    branches: ['v3/live-integration']
+    paths: ['v3/**','supabase/**','.github/workflows/live-native-integration.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: live-native-integration-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LOCAL_STATUS_FILE: /tmp/pulso-v3-local-status.json
+      SUPABASE_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Check exact committed source without rewriting it
+        run: |
+          npm --prefix v3 ci
+          mkdir -p v3/evidence
+          node --test tests/*.cjs > v3/evidence/legacy-unit.txt
+          python tests/import_package_test.py
+          node v3/scripts/check.mjs
+          node --test v3/tests/*.test.mjs > v3/evidence/unit.txt
+          node v3/tests/live-board.mjs
+          node v3/tests/live-console-sql.mjs
+          node v3/live/build.mjs
+      - name: Install disposable backend tools
+        run: |
+          mkdir -p /tmp/pulso-v3-cli
+          npm --prefix /tmp/pulso-v3-cli install --save-exact supabase@2.117.0
+          echo '/tmp/pulso-v3-cli/node_modules/.bin' >> "$GITHUB_PATH"
+      - name: Create localhost Supabase, never a linked hosted project
+        run: |
+          mkdir -p /tmp/pulso-v3-local
+          supabase init --workdir /tmp/pulso-v3-local --yes
+          node v3/tests/prepare-local.mjs /tmp/pulso-v3-local
+          python - <<'PY'
+          import pathlib,re,tomllib
+          p=pathlib.Path('/tmp/pulso-v3-local/supabase/config.toml');s=p.read_text()
+          for section,enabled in [('auth',False),('auth.email',True)]:
+            pattern=r'(?ms)(^\['+re.escape(section)+r'\]\s*\n)(.*?)(?=^\[|\Z)'
+            def replace(m):
+              body,n=re.subn(r'(?m)^enable_signup\s*=.*$', 'enable_signup = '+str(enabled).lower(),m[2]);assert n==1;return m[1]+body
+            s,n=re.subn(pattern,replace,s);assert n==1
+          cfg=tomllib.loads(s);assert cfg['auth']['enable_signup'] is False and cfg['auth']['email']['enable_signup'] is True;p.write_text(s)
+          PY
+          supabase start --workdir /tmp/pulso-v3-local --exclude studio,imgproxy,logflare,vector,supavisor,postgres-meta,mailpit > /tmp/pulso-live-start.log 2>&1
+          supabase status --workdir /tmp/pulso-v3-local --output json > "$LOCAL_STATUS_FILE"
+          node - <<'JS'
+          const s=require(process.env.LOCAL_STATUS_FILE);for(const k of ['ANON_KEY','SERVICE_ROLE_KEY','JWT_SECRET','PUBLISHABLE_KEY','SECRET_KEY'])if(s[k])console.log('::add-mask::'+s[k]);console.log('Only the disposable local project is configured.');
+          JS
+      - name: Serve actual local Edge enrollment
+        run: |
+          printf 'PULSO_V3_ORIGINS=http://127.0.0.1:8044\nAPP_ORIGIN=http://127.0.0.1:8044\n' > /tmp/pulso-v3-edge.env
+          supabase functions serve field-enrollment --workdir /tmp/pulso-v3-local --env-file /tmp/pulso-v3-edge.env > /tmp/pulso-v3-edge.log 2>&1 &
+          echo $! > /tmp/pulso-v3-edge.pid
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: http://127.0.0.1:8044' http://127.0.0.1:54321/functions/v1/field-enrollment || true)
+            if [ "$code" = 204 ]; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Native baseline and real HTTP load
+        timeout-minutes: 10
+        run: |
+          node v3/tests/native.mjs
+          node v3/tests/load-native.mjs
+          node v3/tests/restore-native.mjs
+      - name: Real Auth, field enrollment, report and live API integration
+        timeout-minutes: 6
+        run: node v3/tests/live-native.mjs
+      - name: Build field App and live monitor for the same local backend
+        run: |
+          node v3/scripts/fetch-vendor.mjs
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';import {spawnSync} from 'node:child_process';
+          const s=JSON.parse(fs.readFileSync(process.env.LOCAL_STATUS_FILE));const r=spawnSync(process.execPath,['v3/scripts/build.mjs'],{stdio:'inherit',env:{...process.env,SUPABASE_URL:s.API_URL,SUPABASE_PUBLISHABLE_KEY:s.ANON_KEY,PULSO_ENVIRONMENT:'native-live-ci'}});process.exit(r.status??1);
+          JS
+          mkdir -p web/v3
+          cp -a v3/dist/. web/v3/
+          node v3/live/build.mjs
+      - name: Install Chromium and WebKit engines
+        run: |
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Native browser flow, device sizes, code-only exports and revocation
+        timeout-minutes: 10
+        run: python v3/tests/live-native-browser.py
+      - name: Strict combined verdict
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,pathlib,sys
+          root=pathlib.Path('v3/evidence');root.mkdir(parents=True,exist_ok=True);checks=[]
+          for name,minimum in [('native.json',16),('load-native.json',5),('restore-native.json',3),('live-native.json',17),('live-native-browser.json',66),('live-console-sql.json',5)]:
+            p=root/name
+            if not p.exists():checks.append({'file':name,'pass':False,'reason':'Not executed or no evidence'});continue
+            d=json.loads(p.read_text());checks.append({'file':name,'pass':d.get('failed')==0 and d.get('passed',0)>=minimum,'passed':d.get('passed',0),'failed':d.get('failed',0)})
+          verdict={'scope':'Disposable native Supabase + actual browser HTTP; NOT hosted production and NOT physical Android/iPhone','pass':all(c['pass'] for c in checks),'checks':checks}
+          (root/'live-integration-verdict.json').write_text(json.dumps(verdict,indent=2));print(json.dumps(verdict,indent=2));sys.exit(0 if verdict['pass'] else 1)
+          PY
+      - name: Package exact source and sanitized evidence only
+        if: always()
+        run: |
+          mkdir -p /tmp/pulso-live-delivery
+          git rev-parse HEAD > /tmp/pulso-live-delivery/SOURCE_SHA.txt
+          git archive --format=zip HEAD -o /tmp/pulso-live-delivery/source.zip
+          cp -r v3/evidence /tmp/pulso-live-delivery/evidence
+          if [ -d web/live-demo ]; then cp -r web/live-demo /tmp/pulso-live-delivery/; fi
+          if [ -f web/Pulso_LIVE_DEMO_ES.html ]; then cp web/Pulso_LIVE_DEMO_ES.html /tmp/pulso-live-delivery/; fi
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-live-native-integration
+          path: /tmp/pulso-live-delivery/
+          retention-days: 14
+      - name: Stop and remove disposable private sessions
+        if: always()
+        run: |
+          if [ -f /tmp/pulso-v3-edge.pid ]; then kill "$(cat /tmp/pulso-v3-edge.pid)" || true; fi
+          if command -v supabase >/dev/null; then supabase stop --workdir /tmp/pulso-v3-local --no-backup || true; fi
+          rm -f /tmp/pulso-live-private.json /tmp/pulso-v3-browser-private.json /tmp/pulso-v3-local-context.json /tmp/pulso-v3-local-status.json /tmp/pulso-v3-edge.env
