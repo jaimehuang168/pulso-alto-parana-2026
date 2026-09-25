@@ -26,7 +26,7 @@ function setState(s,e){if(display&&reader?.age()>=15&&['loading','offline'].incl
  if(s==='paused')notice('Pantalla en pausa. La encuesta y la recepción del servidor continúan. Reanude para ver los nuevos datos.');
  $('pause').textContent=reader?.paused?'▶ Reanudar':'Ⅱ Pausar';
 }
-function accept(value){display=value;if(value){$('access').hidden=true;$('monitor').hidden=false;$('server-clock').textContent=clock(value.server_time);$('freshness').textContent='Consulta confirmada ahora · nueva consulta cada 5 s';
+function accept(value){display=value;$('admin-console').hidden=DEMO||!value?.can_internal;if(value){$('access').hidden=true;$('monitor').hidden=false;$('server-clock').textContent=clock(value.server_time);$('freshness').textContent='Consulta confirmada ahora · nueva consulta cada 5 s';
  $('audience').value=value.audience;
  for(const o of $('audience').options)o.disabled=!value.can_internal&&o.value!=='released';
  if(!value.can_internal&&city!=='all'&&!value.cities.some(c=>c.id===city))city='all';
@@ -95,3 +95,6 @@ addEventListener('pagehide',()=>{reader?.stop();clearInterval(heartbeat);clearIn
   const session=(await sb.auth.getSession()).data.session;if(session)await start();else{$('access').hidden=false;$('monitor').hidden=true;setState('denied');}
  }catch(e){$('monitor').hidden=false;accept(null);setState('denied',e);}
 })();
+
+// Restore live readers after bfcache without retaining expired displayed data.
+addEventListener("pageshow",event=>{if(event.persisted)location.reload();});
