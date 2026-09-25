@@ -1,10 +1,11 @@
+import {formatAsuncion} from '../web/modules/asuncion-time.mjs';
 /** Pure display contract. Codes-only DTOs reject unexpected fields instead of hiding them. */
 export const CITIES=[{id:'cde',code:'CDE',name:'Ciudad del Este'},{id:'minga',code:'MGA',name:'Minga Guazú'},{id:'hernandarias',code:'HER',name:'Hernandarias'},{id:'franco',code:'PFR',name:'Presidente Franco'}];
 export const COLORS=['#64dbca','#78adff','#f6cd6a','#c6a5ff','#fa9eb2','#9fe3a9','#f0ad78','#acd1dc','#d4b9b3','#8dc8fa','#c6db76','#d1c2f4'];
 export const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const number=n=>n==null?'—':new Intl.NumberFormat('es-PY').format(n);
 export const percentage=(n,base)=>base>0?new Intl.NumberFormat('es-PY',{minimumFractionDigits:1,maximumFractionDigits:1}).format(n/base*100)+'%':'—';
-export const clock=iso=>iso?new Intl.DateTimeFormat('es-PY',{timeZone:'America/Asuncion',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(iso)):'—';
+export const clock=iso=>iso?formatAsuncion(iso,{hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}):'—';
 const fail=()=>{throw new Error('LIVE_UNSAFE_DATA');};
 const int=n=>Number.isSafeInteger(n)&&n>=0;
 function keys(o,allowed){if(!o||Array.isArray(o)||typeof o!=='object'||Object.keys(o).some(k=>!allowed.includes(k)))fail();}

@@ -1,3 +1,4 @@
+import {formatAsuncion} from './asuncion-time.mjs';
 /** Separate serializers: external material is produced ONLY from the safe server projection. */
 import {esc, csv, CITIES} from './core.mjs';
 export const REPORT_PALETTE=['#DB2835','#155F8A','#DCAD35','#278579','#7A5DAA','#CB7543','#697F91','#AE5681','#72934B','#5973B8','#7C6750','#438C9F'];
@@ -19,7 +20,7 @@ export function externalModel(input){
 }
 const nfmt=n=>new Intl.NumberFormat('es-PY').format(n);
 const pct=(n,base)=>base?new Intl.NumberFormat('es-PY',{minimumFractionDigits:1,maximumFractionDigits:1}).format(n/base*100)+' %':'Sin base';
-const local=(t,justTime=false)=>new Intl.DateTimeFormat('es-PY',{timeZone:'America/Asuncion',...(justTime?{}:{year:'numeric',month:'2-digit',day:'2-digit'}),hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(t));
+const local=(t,justTime=false)=>formatAsuncion(t,{...(justTime?{}:{year:'numeric',month:'2-digit',day:'2-digit'}),hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 const text=(x,y,s,size=28,extra='')=>`<text x="${x}" y="${y}" font-size="${size}" ${extra}>${esc(s)}</text>`;
 const wrapped=(value,max=64)=>{const lines=[];let line='';for(const word of String(value).split(/\s+/)){if((line+' '+word).trim().length>max&&line){lines.push(line);line=word;}else line+=(line?' ':'')+word;}if(line)lines.push(line);return lines;};
 export function externalSVG(input){
