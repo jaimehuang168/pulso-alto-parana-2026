@@ -23,7 +23,9 @@ def enable_all():
 def login(page,credentials):
  form=page.locator('#login-form');form.wait_for(state='visible',timeout=20000);form.locator('[name=code]').fill(credentials['code']);form.locator('[name=password]').fill(credentials['password']);form.locator('button[type=submit]').click()
 def ready(page):page.locator('.candidate-line').first.wait_for(timeout=20000)
-def busy_done(page):page.wait_for_function("!document.querySelector('form[aria-busy=true]')")
+def busy_done(page):
+ # Report-row actions are not forms; the console locks all buttons for both paths.
+ page.wait_for_function("document.querySelector('#reload')?.disabled !== true && !document.querySelector('form[aria-busy=true]')",timeout=25000)
 def submit(page,form):page.locator(form+' button').click();busy_done(page);page.locator('#message.success').wait_for(timeout=20000)
 def snapshot(page,name):page.screenshot(path=str(OUT/name),full_page=True)
 def int_text(locator):return int(''.join(c for c in locator.inner_text() if c.isdigit()))
@@ -53,6 +55,7 @@ with sync_playwright() as pw:
    a.locator('button[data-city=minga]').click();check(engine+' native single-city view has exactly its four candidates',a.locator('.city-card').count()==1 and a.locator('.candidate-line').count()==4);a.set_viewport_size({'width':390,'height':844});snapshot(a,engine+'-native-single-mobile.png')
    a.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}));window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));");ready(a);a.wait_for_timeout(5600);check(engine+' restored back-forward page resumes live polling','ACTUALIZACIÓN ACTIVA' in a.locator('#connection').inner_text())
    a.locator('#admin-console').click();a.locator('#workspace:not([hidden])').wait_for(timeout=20000);check(engine+' shared native administrator session opens private controls without another password','Candidatura DEMO' in a.locator('#mapping').inner_text())
+   check(engine+' mobile administrator buttons remain legible rather than single-letter columns',a.locator('#reload').bounding_box()['width']>=140 and a.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
    a.locator('#alias [name=confirmed]').check();submit(a,'#alias');check(engine+' actual alias confirmation writes and reads revised private mapping','Confirmados' in a.locator('#mapping').inner_text())
    a.locator('#policy [name=enabled]').check();a.locator('#policy [name=reference]').fill('ISOLATED BROWSER POLICY NOT PRODUCTION');submit(a,'#policy')
    a.locator('#channel [name=enabled]').check();a.locator('#channel [name=expires]').fill((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(minutes=25)).isoformat());a.locator('#channel [name=reference]').fill('ISOLATED BROWSER LIVE AUTHORIZATION');a.locator('#channel [name=confirmed]').check();submit(a,'#channel');enable_all()
@@ -65,7 +68,7 @@ with sync_playwright() as pw:
      rows=list(csv.reader(io.StringIO(path.read_text('utf-8-sig'))));check(engine+' complete private CSV downloads all pages not first 500',len(rows)-1==inside['total_records'] and 'real_name' in rows[0])
     elif extension!='png':check(engine+' '+action+' download excludes real names and private UUIDs',all(x['real_name'] not in path.read_text('utf-8-sig') and x['candidate_id'] not in path.read_text('utf-8-sig') for x in f['configs'][0]['items']))
     else:check(engine+' native data renders downloadable code-only PNG',path.stat().st_size>15000)
-   a.on('dialog',lambda d:d.accept('ISOLATED BROWSER CUT RELEASE REFERENCE'));first.locator('[data-download=release]').click();busy_done(a);check(engine+' frozen cut release has its own successful authorization',rpc('v3_report_read',{'p_id':report_id,'p_audience':'external'})['status']=='released')
+   a.on('dialog',lambda d:d.accept('ISOLATED BROWSER CUT RELEASE REFERENCE'));first.locator('[data-download=release]').click();busy_done(a);first.locator('.status').get_by_text('released',exact=True).wait_for(timeout=20000);check(engine+' frozen cut release has its own successful authorization',rpc('v3_report_read',{'p_id':report_id,'p_audience':'external'})['status']=='released')
    vc=browser.new_context(**pw.devices['iPhone 13' if engine=='webkit' else 'Pixel 5'],locale='es-PY');v=vc.new_page();v.goto(BASE+'/live/');login(v,f['viewer']);ready(v);check(engine+' scoped Viewer sees only CDE and no admin console',v.locator('.city-card').count()==1 and v.locator('#admin-console').is_hidden() and 'Candidatura' not in v.locator('#board').inner_text())
    v.goto(BASE+'/live/control.html');v.get_by_text('Solo administración puede configurar nombres, códigos y permisos.',exact=True).wait_for(timeout=20000);check(engine+' direct console navigation cannot reveal private state',v.locator('#workspace').is_hidden() and 'Candidatura DEMO' not in v.locator('body').inner_text());v.goto(BASE+'/live/');ready(v)
    vc.set_offline(True);v.wait_for_timeout(16500);check(engine+' stale external results are hidden after bounded validity',v.locator('.candidate-line').count()==0);vc.set_offline(False);v.locator('#refresh').click();ready(v);check(engine+' native Viewer reconnection recovers authorized counts',v.locator('.candidate-line').count()==2)
@@ -74,7 +77,8 @@ with sync_playwright() as pw:
    allv.goto(BASE+'/live/?view=internal');allv.locator('#notice:not([hidden])').wait_for(timeout=20000);check(engine+' forged internal URL cannot upgrade a Viewer',allv.locator('.candidate-line').count()==0)
    allc.close();vc.close();mobile.close();admin_ctx.close();browser.close()
  except Exception as e:
-  detail=safe_error(e);print('NATIVE BROWSER FAIL',detail,flush=True);checks.append({'name':'Native browser execution','pass':False,'error':detail})
+  detail=safe_error(e);print('NATIVE BROWSER FAIL',detail,flush=True)
+  if not checks or checks[-1]['pass']:checks.append({'name':'Native browser execution','pass':False,'error':detail})
   with contextlib.suppress(Exception):snapshot(a,'failure.png')
  finally:
   server.shutdown();(ROOT/'evidence/live-native-browser.json').write_text(json.dumps({'scope':'Actual App/login/HTTP/database integration on disposable Supabase; Chromium Pixel and WebKit iPhone emulation, NOT physical devices','passed':sum(c['pass'] for c in checks),'failed':sum(not c['pass'] for c in checks),'checks':checks},ensure_ascii=False,indent=2))
