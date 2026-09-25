@@ -21,16 +21,16 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
-      - name: Wire the reviewed bounded-validity reader
+      - name: Apply bounded reader and exact reviewed source corrections
         run: |
           python - <<'PY'
           from pathlib import Path
           p=Path('v3/live/app.mjs');s=p.read_text()
           if "import {LiveReader} from './reader.mjs';" not in s:
             assert ',LiveReader,escape}' in s
-            s="import {LiveReader} from './reader.mjs';\n"+s.replace(',LiveReader,escape}',',escape}',1)
-            p.write_text(s)
+            s="import {LiveReader} from './reader.mjs';\n"+s.replace(',LiveReader,escape}',',escape}',1);p.write_text(s)
           PY
+          python v3/live/review-final.py
       - name: Locked dependencies and independent regression layers
         run: |
           npm --prefix v3 ci
@@ -47,13 +47,13 @@ jobs:
           python -m playwright install --with-deps chromium webkit
       - name: HTTP four-city and single-city monitor tests
         run: python v3/tests/live-browser.py
-      - name: Commit only the tested module import
+      - name: Commit only tested source corrections
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- v3/live/app.mjs
+          git add -- v3/live/app.mjs v3/live/core.mjs
           if ! git diff --cached --quiet; then
-            git commit -m '即時看板使用可撤銷且包含傳输延遲的讀取器；測試通過'
+            git commit -m '修正即時看板輸出快照檔名、HTTP授權失效與長名單顯示'
             git push origin HEAD:v3/live-monitor
           fi
       - name: Record deliverable source and honest test scope
