@@ -115,23 +115,30 @@ jobs:
           import json,pathlib,subprocess,hashlib
           d={'feature':'pulso-live-2','accepted_source':'c63979996676e115e9bbb5525ed49c9cd7c947c0','native_acceptance_run':36080930706,'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'backend_changed_by_this_deploy':False,'required_migrations':[9,10,11],'live_demo_is_synthetic':True,'physical_device_acceptance_completed':False}
           d['files']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for folder in ['web/live','web/live-demo'] for p in pathlib.Path(folder).iterdir() if p.is_file()}
-          pathlib.Path('web/live-release.json').write_text(json.dumps(d,indent=2))
-          pathlib.Path('/tmp/pulso-v3-release/live-release.json').write_text(json.dumps(d,indent=2))
+          pathlib.Path('web/live-release.json').write_text(json.dumps(d,indent=2));pathlib.Path('/tmp/pulso-v3-release/live-release.json').write_text(json.dumps(d,indent=2))
           PY
           git archive --format=zip HEAD -o /tmp/pulso-v3-release/live-source.zip
           tar -C web/live -czf /tmp/pulso-v3-release/live-private-frontend.tar.gz .
           tar -C web/live-demo -czf /tmp/pulso-v3-release/live-synthetic-demo.tar.gz .
-          echo '即時畫面與控制台已建置。前端發布不會安裝SQL、建帳、開收或核准外部發布。' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7.0.0
+      - name: Prepare hands-on test center with no new cloud resources
         if: steps.check.outputs.ready == 'true'
+        run: |
+          node scripts/prepare-pruebas.mjs
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium
+          PULSO_TEST_EVIDENCE=/tmp/pulso-v3-release/readiness-tests python tests/quick-readiness-browser.py
+          tar -C web/pruebas -czf /tmp/pulso-v3-release/pruebas-entry.tar.gz .
+          echo '實機測試入口已準備。只重用既有專案；不建新專案、不開PITR、不執行正式SQL。' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.0
+        if: always() && steps.check.outputs.ready == 'true'
         with:
           name: pulso-v3-delivery-source-and-frontends
           path: /tmp/pulso-v3-release/
           retention-days: 14
       - uses: actions/configure-pages@v6.0.0
-        if: steps.check.outputs.ready == 'true'
+        if: success() && steps.check.outputs.ready == 'true'
       - uses: actions/upload-pages-artifact@v5.0.0
-        if: steps.check.outputs.ready == 'true'
+        if: success() && steps.check.outputs.ready == 'true'
         with:
           path: web
   deploy:
@@ -146,7 +153,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v5.0.1
       - name: Report deployment boundary
-        run: echo '前端發布完成；正式Supabase啟用與實體手機验收並未由此部署代為完成。' >> "$GITHUB_STEP_SUMMARY"
+        run: echo '前端發布完成；不新建專案、不改計費、不代為完成正式Supabase啟用或實體手機驗收。' >> "$GITHUB_STEP_SUMMARY"
   smoke:
     needs: deploy
     runs-on: ubuntu-24.04
@@ -203,7 +210,13 @@ jobs:
             page.goto(base+'live/',wait_until='domcontentloaded');page.locator('#access:not([hidden]) #login-form').wait_for(timeout=20000);assert page.locator('.candidate-line').count()==0
             checks.append({'name':'Private live route requires login without synthetic fallback','pass':True})
             page.goto(base+'live/control.html',wait_until='domcontentloaded');page.locator('#access:not([hidden]) #login').wait_for(timeout=20000);assert page.locator('#workspace').is_hidden() and page.locator('.mapping-row').count()==0
-            checks.append({'name':'Published private console requires an administrator session','pass':True});browser.close()
+            checks.append({'name':'Published private console requires an administrator session','pass':True})
+            page.goto(base+'pruebas/',wait_until='domcontentloaded');page.locator('#login-button:not([disabled])').wait_for(timeout=20000)
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+            checks.append({'name':'Hands-on read-only test center is published and fits phone width','pass':True})
+            page.goto(base+'pruebas/ensayo/v3/',wait_until='domcontentloaded');page.get_by_role('heading',name='Ensayo sin configurar').wait_for(timeout=20000)
+            assert page.locator('#login-form').count()==0
+            checks.append({'name':'Unconfigured existing-project test entry blocks production fallback','pass':True});browser.close()
           pathlib.Path('evidence/published-smoke.json').write_text(json.dumps({'scope':'Public static routes and explicitly synthetic demos only; no production login, no database writes, no physical devices','source_commit':live['source_commit'],'accepted_source':live['accepted_source'],'passed':len(checks),'failed':0,'checks':checks},indent=2));print(json.dumps(checks,indent=2))
           PY
       - uses: actions/upload-artifact@v7.0.0
