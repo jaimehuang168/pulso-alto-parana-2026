@@ -2,7 +2,7 @@ name: Publish verified Spanish tutorials
 on:
   push:
     branches: [docs/spanish-video-tutorials]
-    paths: ['.github/workflows/tutorial-publish.yml']
+    paths: ['.github/workflows/tutorial-publish.yml','docs/tutorials/install_bundle.py']
   workflow_dispatch:
 permissions:
   contents: write
@@ -21,6 +21,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python -m py_compile docs/tutorials/*.py
+          node --check docs/tutorials/site/tutorials.js
           mkdir -p /tmp/approved-tutorials /tmp/tutorial-release-evidence
           python - <<'PY'
           import json,subprocess,pathlib
