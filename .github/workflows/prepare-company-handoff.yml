@@ -1,0 +1,58 @@
+name: Prepare company handoff
+on:
+  push:
+    branches: ['fix/company-owned-confirmations']
+    paths: ['.github/workflows/prepare-company-handoff.yml']
+permissions:
+  contents: write
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: fix/company-owned-confirmations
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Verify reviewed source before applying
+        run: |
+          python - <<'PY'
+          from pathlib import Path,PurePosixPath
+          import base64,hashlib,lzma,json,subprocess
+          parts=[Path(f'v3/handoff/source-part-{i}.txt') for i in [1,2]]
+          raw=base64.b64decode(''.join(p.read_text().strip() for p in parts),validate=True)
+          assert hashlib.sha256(raw).hexdigest()=='63b01499457ee6a9ecd094b79b4346cc31a6b913120e86bf06337823ee861730'
+          d=json.loads(lzma.decompress(raw))
+          for name,expected in d['base_hashes'].items():
+            assert '..' not in PurePosixPath(name).parts and not name.startswith('/')
+            assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==expected,name
+          patch=Path('/tmp/company-handoff.patch');patch.write_text(d['patch'])
+          subprocess.run(['git','apply','--check',str(patch)],check=True)
+          subprocess.run(['git','apply',str(patch)],check=True)
+          for name,text in d['files'].items():
+            p=PurePosixPath(name)
+            assert '..' not in p.parts and not p.is_absolute()
+            assert name.startswith(('v3/tests/company-handoff','v3/web/modules/company-readiness','supabase/migrations/013_','supabase/V3_1_1_COMPANY_HANDOFF'))
+            assert p.suffix in ['.sql','.mjs','.py'] and len(text)<100000
+            path=Path(name);assert not path.exists();path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
+          for p in parts:p.unlink()
+          PY
+          python docs/build-company-manuals.py
+      - name: Check source and company readiness boundaries
+        run: |
+          npm --prefix v3 ci
+          node v3/scripts/check.mjs
+          node --test v3/tests/company-handoff-ui.test.mjs
+          node v3/tests/company-handoff.mjs
+      - name: Commit only validated code and matching manuals
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- v3/handoff v3/web/app.mjs v3/web/modules/company-readiness.mjs v3/web/modules/company.mjs v3/web/modules/views.mjs v3/web/modules/core.mjs v3/web/simulation.mjs v3/scripts/build.mjs v3/tests/company-handoff.mjs v3/tests/company-handoff-ui.test.mjs v3/tests/company-handoff-native.mjs v3/tests/company-handoff-browser.py docs/company-manual-sections.json docs/build-company-manuals.py v3/web/manual-es.html v3/web/manual-es-zh.html supabase/migrations/013_v3_company_handoff.sql supabase/V3_1_1_COMPANY_HANDOFF.sql
+          if ! git diff --cached --quiet; then
+            git commit -m '將三項確認交由公司Admin保存與核准；Super Admin只查看狀態'
+            git push origin HEAD:fix/company-owned-confirmations
+          fi
