@@ -1,0 +1,42 @@
+name: Workspace readback consistency
+on:
+  push:
+    branches: ['ui/v2-style-spanish-workspace']
+    paths: ['.github/workflows/workspace-readback.yml']
+permissions:
+  contents: write
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ui/v2-style-spanish-workspace
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Preserve current configuration revision after creating an audited snapshot
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('v3/web/app.mjs');s=p.read_text();old="S.registry=snap;S.aliases=aliases;S.ui.recordPage=0;";new="S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.ui=W.normalizeFilters(S.boot,S.ui);S.registry=snap;S.aliases=aliases;S.ui.recordPage=0;"
+          assert old in s;s=s.replace(old,new);p.write_text(s)
+          p=Path('v3/web/modules/views.mjs');s=p.read_text().replace("${E(r.source)}","${E(({mobile:'Móvil',paper:'Papel',paper_transcription:'Papel transcrito'})[r.source]||r.source)}");p.write_text(s)
+          PY
+          node --check v3/web/app.mjs
+          node --check v3/web/modules/views.mjs
+          node --test v3/tests/workspace.test.mjs v3/tests/company-ui.test.mjs v3/tests/company-handoff-ui.test.mjs
+      - name: Commit only verified source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- v3/web/app.mjs v3/web/modules/views.mjs
+          git commit -m '完整紀錄快照後更新設定版本，避免後續編輯使用舊revision'
+          git push origin HEAD:ui/v2-style-spanish-workspace
+          mkdir -p /tmp/pulso-workspace-source
+          git archive --format=zip HEAD -o /tmp/pulso-workspace-source/source.zip
+      - uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pulso-workspace-source-for-manual
+          path: /tmp/pulso-workspace-source/
+          retention-days: 7
