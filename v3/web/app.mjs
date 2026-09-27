@@ -115,7 +115,7 @@ async function click(action,id,el){
  case 'demo-account':{if(!S.simulation)throw new Error('V3_SCOPE_DENIED');await enter(await api.demoLogin(id));break;}
  default:throw new Error('V3_UNKNOWN_ACTION');
  }}
-async function submit(formEl){let data=values(formEl);const request=formEl.dataset.request||(formEl.dataset.request=C.uuid());switch(formEl.id){
+async function submit(formEl){let data=values(formEl);const request=formEl.dataset.request||(formEl.dataset.request=C.uuid());switch(formEl.getAttribute('id')){
  case 'login-form':S.loginCode=data.code;await enter(await api.login(data.code,data.password));break;
  case 'join-form':{let claim;try{claim=JSON.parse(sessionStorage.getItem('pulso-v3-claim')||'null');}catch{}if(!claim||claim.token!==data.token)claim={token:data.token,secret:C.token(),lock:C.uuid()};sessionStorage.setItem('pulso-v3-claim',JSON.stringify(claim));const session=await api.claim(claim.token,claim.secret,claim.lock);sessionStorage.removeItem('pulso-v3-claim');S.join=null;await enter(session);break;}
  case 'vault-form':{if(!S.vaultExists&&data.phrase!==data.repeat)throw new Error('V3_VAULT_WRONG_KEY');await vault.unlock(data.phrase);S.unlock=false;S.error=null;
