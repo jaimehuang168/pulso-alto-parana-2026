@@ -1,4 +1,3 @@
-import {isCompanyAdmin} from './modules/company-readiness.mjs';
 import * as C from './modules/core.mjs';
 import * as V from './modules/views.mjs';
 import {CloudAPI} from './modules/api.mjs';
@@ -42,8 +41,8 @@ async function refresh(force=false){if(S.refreshing||!S.boot||S.unlock)return;S.
 async function loadReadiness(){
  S.readiness=null;S.readinessError=null;
  if(S.boot?.actor.role!=='admin')return;
- try{S.readiness=await api.rpc('v3_company_readiness');}
- catch(e){S.readinessError=/PGRST202|function.*does not exist/i.test(String(e.code||'')+' '+String(e.message||''))?'Módulo 013 pendiente de instalación. La empresa puede continuar preparando datos y usuarios.':'No se pudo leer el estado ('+C.feedback(e).code+'). Vuelva a intentar.';}
+ try{S.readiness=await api.rpc('v3_installation_status');}
+ catch(e){S.readinessError=/PGRST202|function.*does not exist/i.test(String(e.code||'')+' '+String(e.message||''))?'Estado de acceso directo no disponible. Solo el Super Admin revisa la instalación; la empresa puede preparar datos y usuarios.':'No se pudo leer el estado ('+C.feedback(e).code+'). Vuelva a intentar.';}
 }
 async function loadRecords(append=false){const last=append?S.records.at(-1):null;const rows=await api.rpc('v3_records',{p_before:last?.received_at||null,p_before_id:last?.id||null,p_limit:100});S.records=append?[...S.records,...rows]:rows;S.moreRecords=rows.length===100;}
 async function navigate(page){if(!C.allowedPages(S.boot?.actor.role).includes(page))throw new Error('V3_SCOPE_DENIED');if(S.page==='capture'&&S.choice&&!confirm('¿Salir sin guardar esta selección? Los pendientes ya guardados se conservan.'))return;S.page=page;S.error=null;S.choice=null;
@@ -115,18 +114,7 @@ async function click(action,id,el){
  case 'import-apply':if(S.preview?.valid&&confirm('¿Aplicar exactamente este lote validado? No abre puntos ni publica formularios.')){await api.rpc('v3_import_apply',{p_batch:S.preview.batch_id,p_hash:S.preview.hash});S.preview=null;await refresh(true);}break;
  case 'operation-run':case 'operation-pause':case 'operation-close':commandForm('Control global','operation.state',hid('state',{'operation-run':'running','operation-pause':'paused','operation-close':'closed'}[action])+`<p>Esta operación afecta la disponibilidad global. Los puntos se abren por separado.</p>`+reason(),S.boot.operation.revision);break;
  case 'preflight':modal('Preflight de V3',`<pre>${E(JSON.stringify(await api.rpc('v3_preflight'),null,2))}</pre><p>Los pendientes en teléfonos y las pruebas físicas no se verifican por este RPC.</p>`);break;
- case 'activate':await navigate('company');break;
  case 'readiness-refresh':await loadReadiness();render();break;
- case 'company-activate':{
-  if(!isCompanyAdmin(S.boot))throw new Error('V3_COMPANY_ADMIN_ONLY');
-  if(!S.readiness?.can_edit||!S.readiness?.ready)throw new Error('V3_COMPANY_CONFIRMATIONS_PENDING');
-  const f=document.getElementById('company-readiness-form'),v=f?values(f):null,d=S.readiness;
-  if(v&&(v.outbox!==d.outbox_handled||v.backup!==d.backup_reference||v.acceptance!==d.acceptance_reference))throw new Error('V3_SAVE_READINESS_FIRST');
-  if(!confirm('¿Confirmar las declaraciones guardadas como Admin de la empresa y activar V3? Se cerrará el cliente V2. No abre encuestas.'))break;
-  const key=el.dataset.request||(el.dataset.request=C.uuid());
-  await api.rpc('v3_company_activate',{p_expected:d.revision,p_request_id:key});
-  await refresh(true);toast('V3 activado por la empresa. Los puntos no se abrieron automáticamente.');break;
- }
  case 'password':form('Cambiar mi contraseña','password-form',V.field('Nueva contraseña','password','','password','required minlength="16" autocomplete="new-password"')+V.field('Repetir','repeat','','password','required minlength="16" autocomplete="new-password"'));break;
  case 'rescue-export':if(!vault?.key)throw new Error('V3_VAULT_LOCKED');C.download(JSON.stringify(await vault.exportEncrypted()),'PULSO_COPIA_CIFRADA_'+new Date().toISOString().slice(0,10)+'.json','application/json');break;
  case 'rescue-import':form('Recuperar copia de mi propia identidad','rescue-form',V.field('Copia cifrada','file','','file','required accept=".json"')+V.field('Frase usada en la copia','phrase','','password','required minlength="12"')+'<p>No cambia el origen ni las respuestas. La misma cuenta debe volver a autenticarse.</p>');break;
@@ -143,11 +131,6 @@ async function submit(formEl){let data=values(formEl);const request=formEl.datas
   if(S.boot.actor.user_id!==vault.user)throw new Error('V3_VAULT_WRONG_KEY');await vault.write('bootstrap',S.boot);S.pack=await vault.read('pack');S.queue=await vault.entries();S.page='task';render();if(navigator.onLine){await refresh();await api.connect(()=>refresh());await sync();}break;}
  case 'command-form':{if(data.point_id==='')data.point_id=null;if(data.enabled==='true'||data.enabled==='false')data.enabled=data.enabled==='true';if(formEl.dataset.command==='grant.save'){data.capabilities=data.viewer_cap?['view_results']:[...formEl.querySelectorAll('[name=cap]:checked')].map(x=>x.value);delete data.cap;delete data.viewer_cap;data.valid_until=new Date(data.valid_until).toISOString();}await api.command(formEl.dataset.command,data,expected(formEl),request);close();await refresh(true);toast('Operación confirmada.');break;}
  case 'assignment-form':await api.command('assignment.create',data,0,request);close();await refresh(true);break;
- case 'company-readiness-form':{
-  if(!isCompanyAdmin(S.boot))throw new Error('V3_COMPANY_ADMIN_ONLY');
-  await api.rpc('v3_company_readiness_save',{p_outbox_handled:data.outbox,p_backup_reference:data.backup,p_acceptance_reference:data.acceptance,p_expected:expected(formEl),p_request_id:request});
-  await loadReadiness();render();toast('Avance guardado. No se ha activado V3 ni abierto encuestas.');break;
- }
  case 'company-form':await api.rpc('v3_company_command',{p_action:'company.save',p_data:data,p_request_id:request,p_expected:expected(formEl)});await refresh(true);toast('Datos de empresa guardados.');break;
  case 'company-edit-form':await api.rpc('v3_company_command',{p_action:formEl.dataset.command,p_data:data,p_request_id:request,p_expected:expected(formEl)});close();await refresh(true);toast('Corrección guardada con auditoría.');break;
  case 'operation-form':data.lease_minutes=Number(data.lease_minutes);data.drain_hours=Number(data.drain_hours);await api.command('operation.save',data,expected(formEl),request);await refresh(true);break;
