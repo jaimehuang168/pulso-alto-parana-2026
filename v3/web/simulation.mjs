@@ -10,8 +10,7 @@ export async function createSimulation(){
  const command=(a,d,r=0)=>call('v3_command',{p_action:a,p_data:d,p_request_id:uuid(),p_expected:r});
  const companyAdmin=uuid(),companySession=uuid();await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[companyAdmin,'company-demo@example.invalid']);await db.query('insert into auth.sessions values($1,$2)',[companySession,companyAdmin]);await db.query("insert into pulso_v3.actors(user_id,code,display_name,role,enrolled) values($1,'ADMIN-DEMO','Administración DEMO','admin',true)",[companyAdmin]);
  const today=(await db.query("select (now() at time zone 'America/Asuncion')::date::text as day")).rows[0].day;
- await command('operation.save',{title:'SIMULACIÓN · Pulso V3',contest:'Intendencia municipal',fieldwork_date:today,retention_policy:'Datos sintéticos; se descartan al recargar.'},1);
- user=companyAdmin;session=companySession;await call('v3_company_readiness_save',{p_outbox_handled:true,p_backup_reference:'Simulación aislada sin base externa',p_acceptance_reference:'Aceptación simulada no válida para producción',p_expected:1,p_request_id:uuid()});await call('v3_company_activate',{p_expected:2,p_request_id:uuid()});user=ADMIN;session=SESSION;
+ await command('operation.save',{title:'SIMULACIÓN · Pulso V3',contest:'Intendencia municipal',fieldwork_date:today,retention_policy:'Datos sintéticos; se descartan al recargar.'},2);
  for(const [idx,d]of CITIES.entries()){
   const site=(await command('station.save',{district_id:d.id,code:'DEMO-'+d.code,name:'Centro DEMO '+d.code,address:'Dirección sintética para demostración'})).id;
   const point=(await command('point.save',{station_id:site,code:'DEMO-PT-'+d.code,label:'Acceso DEMO '+d.code})).id;
