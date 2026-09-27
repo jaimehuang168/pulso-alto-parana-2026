@@ -1,0 +1,22 @@
+name: Build company manuals
+on:
+  push:
+    branches: ['release/company-admin-3-1']
+    paths: ['.github/workflows/company-manuals.yml']
+permissions:
+  contents: write
+jobs:
+  manuals:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: release/company-admin-3-1
+      - name: Decode verified document data and verify translation coverage
+        run: python docs/build-company-manuals.py
+      - name: Commit only documentation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- docs/company-manual-sections.json docs/company-manual-part1.txt docs/company-manual-part2.txt docs/company-manual-part3.txt v3/web/manual-es.html v3/web/manual-es-zh.html
+          if ! git diff --cached --quiet; then git commit -m '完成26章純西文與西文繁中逐段對照手冊';git push origin HEAD:release/company-admin-3-1;fi
