@@ -1,15 +1,13 @@
-import {esc as E,time} from './core.mjs';
+/** Read-only installation status. No company activation or attestation form. */
+import {esc as E} from './core.mjs';
 export const isCompanyAdmin=b=>b?.actor?.role==='admin'&&b.actor.is_super_admin===false;
 export function readinessCard(S){
  const b=S.boot,d=S.readiness,owner=b?.actor?.is_super_admin===true;
  if(b?.actor?.role!=='admin')return '';
- const state=d?.schema_version===13;
- const active=(d?.operation_mode||b.operation_mode)==='v3';
- const intro='<h2>Confirmaciones a cargo de la empresa</h2><p>La empresa registra las colas V2, el respaldo/restauración y la aceptación. El Super Admin no debe completar estas declaraciones. Puede preparar datos y usuarios sin esperar a terminarlas.</p>';
- const pending=state?`<ul><li>Colas V2: ${d.outbox_handled?'Confirmadas por la empresa':'Pendiente'}</li><li>Respaldo / restauración: ${d.backup_recorded?'Referencia registrada':'Pendiente'}</li><li>Aceptación: ${d.acceptance_recorded?'Referencia registrada':'Pendiente'}</li></ul>`:'';
- if(owner)return `<section class="card" data-company-readiness>${intro}<p class="inline-note">${active?'V3 ya está activado.':'Pendiente de la empresa. No se solicita confirmación al Super Admin.'} ${!state?'El módulo de delegación debe estar instalado para el Admin.':''}</p>${pending}<button type="button" data-action="nav" data-id="access">Administrar cuentas de la empresa</button></section>`;
- if(!state)return `<section class="card" data-company-readiness>${intro}<p class="inline-note">${E(S.readinessError||'Falta instalar el módulo 013 de confirmaciones de empresa. No vuelva a instalar módulos anteriores.')}</p><button type="button" data-action="readiness-refresh">Actualizar estado</button></section>`;
- if(active)return `<section class="card" data-company-readiness>${intro}<p class="badge">V3 activado</p><p>${d.activated_by_code?'Confirmado por '+E(d.activated_by_code)+' · '+time(d.activated_at):'Activado anteriormente; no se inventan declaraciones de esta empresa.'}</p><p>La recepción y la difusión siguen siendo decisiones separadas.</p></section>`;
- const disabled=!d.can_edit;
- return `<section class="card" data-company-readiness>${intro}${pending}<form id="company-readiness-form" data-revision="${Number(d.revision)}"><fieldset ${disabled?'disabled':''}><legend>Guardar avances sin activar</legend><label class="check"><input type="checkbox" name="outbox" ${d.outbox_handled?'checked':''}>Se han preservado y reconciliado las colas V2 de todos los titulares.</label><label class="field">Referencia de respaldo y restauración comprobada<textarea name="backup" maxlength="2000" rows="3">${E(d.backup_reference||'')}</textarea></label><label class="field">Referencia de aceptación firmada por la empresa<textarea name="acceptance" maxlength="2000" rows="3">${E(d.acceptance_reference||'')}</textarea></label><p class="inline-note">Puede guardar campos vacíos y volver después. Registrar una referencia no ejecuta un respaldo ni una prueba. No introduzca contraseñas o claves.</p><button type="submit" class="primary">Guardar avance de la empresa</button></fieldset></form><p>Última actualización: ${time(d.updated_at)}${d.updated_by_code?' · '+E(d.updated_by_code):''}</p><button type="button" data-action="readiness-refresh">Recargar estado guardado</button> <button type="button" class="danger" data-action="company-activate" ${!d.ready||disabled?'disabled':''}>Confirmar como empresa y activar V3</button><p class="inline-note">La activación usa solamente el avance guardado, cierra el cliente V2 y no abre puntos ni encuestas. No requiere una segunda aprobación del Super Admin.</p></section>`;
+ const live=b.operation_mode==='v3';
+ const known=d?.module_014_installed===true;
+ const state=live?'Acceso directo V3.1':'Configuración disponible · actualización técnica pendiente';
+ const intro=live?'Ingrese con su cuenta y utilice las funciones de su rol. No hay un paso de activación.':'Puede preparar datos y usuarios. Solo el Super Admin completa la actualización técnica; la empresa no ejecuta SQL ni confirma una activación.';
+ const modules=owner?`<p>Módulo 013: ${known?(d.module_013_installed?'instalado':'no confirmado'):'sin verificar en esta sesión'} · Acceso directo: ${known?'instalado':'sin verificar en esta sesión'}</p>`:'';
+ return `<section class="card" data-company-readiness><h2>Uso de la aplicación</h2><p class="badge">${state}</p><p>${intro}</p>${modules}${S.readinessError&&owner?`<p class="inline-note">${E(S.readinessError)}</p>`:''}<p>La fecha, la apertura de cada punto y la difusión conservan sus controles. No se crean respuestas ni autorizaciones automáticamente.</p><button type="button" data-action="readiness-refresh">Actualizar estado</button></section>`;
 }
