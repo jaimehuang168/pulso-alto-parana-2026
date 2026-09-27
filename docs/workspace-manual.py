@@ -39,7 +39,7 @@ sections=[
 'Cambiar rol entre Coordinador y Viewer revoca los alcances previos y exige nuevo ingreso. No convierta la identidad de un encuestador en una cuenta administrativa.',
 'Para cambiar su propia contraseña use Mi contraseña o Ayuda → Cambiar mi contraseña; escriba al menos 16 caracteres y repítalos. El restablecimiento de otra cuenta invalida sesiones o autorizaciones anteriores; entregue la nueva clave de forma privada.']),
 ('Autorizar alcances',[
-'En Equipo → Cuentas seleccione Autorizar alcance para un coordinador o Viewer. Defina ciudad, punto cuando corresponda y Válido hasta. El administrador no se limita por esta asignación de ciudad.',
+'En Equipo → Cuentas seleccione Asignar alcance para un coordinador o Viewer. Defina ciudad, punto cuando corresponda y Válido hasta. El administrador no se limita por esta asignación de ciudad.',
 'Para coordinadores autorice solo capacidades necesarias: ver operación, incorporar personal, asignar tareas, crear o aprobar puntos y abrir o pausar puntos. La fecha de vencimiento es obligatoria.',
 'Para un Viewer, el alcance permite consultar su ciudad pero no basta por sí solo para divulgar datos: también se requiere habilitación y autorización del informe o canal.',
 'Para retirar acceso, revoque el alcance correspondiente. Un dispositivo sin red no recibe la revocación inmediatamente; el servidor vuelve a verificar los envíos cuando se conecta.']),
@@ -137,7 +137,7 @@ sections=[
 'Puede corregir datos de la misma empresa, persona o local. Los códigos de identidad y el historial se conservan. Un reemplazo de persona o lugar distinto exige un registro nuevo.',
 'Cambiar asignación crea otra tarea; cambiar candidaturas publicadas exige otra versión. Aceptar o excluir una respuesta cambia su tratamiento, no inventa un voto ni elimina el registro original.',
 'La simplificación visual no amplía los permisos. Las cuentas solo reciben los datos y operaciones autorizados por el servidor, aunque alguien intente abrir otra dirección manualmente.',
-'La documentación bilingüe y la administración técnica se entregan por un canal separado al responsable. El sitio de trabajo y este manual público permanecen completamente en español.'])
+'Solicite asistencia a la persona responsable cuando una función no esté disponible. No intente resolver un permiso mediante otra cuenta o una dirección alternativa.'])
 ]
 assert len(sections)==26
 css='''*{box-sizing:border-box}body{margin:0;font:18px/1.7 system-ui,Arial,sans-serif;color:#17343d;background:#f3f6f7}header{background:#113740;color:white;padding:40px max(22px,calc((100vw - 1040px)/2))}h1{font-size:clamp(30px,5vw,44px);line-height:1.2}header small{letter-spacing:3px}main{max-width:1040px;margin:auto;padding:26px}section,nav{background:white;border:1px solid #dbe5e7;border-radius:14px;padding:28px;margin-bottom:22px}h2{font-size:26px;line-height:1.3;color:#165f63}p{overflow-wrap:anywhere}nav a{display:block;padding:6px 0}a{color:#126d70}li{margin:13px 0}.note{background:#e6f1ec;padding:18px;border-radius:10px}@media(max-width:600px){main{padding:14px}section,nav{padding:20px}body{font-size:17px}h2{font-size:23px}}@media print{body{background:white;font-size:10.5pt}header{background:white;color:#17343d;padding:0}main{padding:0}section{border:0;padding:12px 0}h2{break-after:avoid;font-size:18pt}li{break-inside:avoid}nav{break-after:page}}'''
