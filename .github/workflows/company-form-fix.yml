@@ -1,0 +1,37 @@
+name: Fix company form dispatch
+on:
+  push:
+    branches: ['release/company-admin-3-1']
+    paths: ['.github/workflows/company-form-fix.yml']
+permissions:
+  contents: write
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: release/company-admin-3-1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Use real form attribute instead of named input property
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('v3/web/app.mjs');s=p.read_text();old='switch(formEl.id){';new="switch(formEl.getAttribute('id')){"
+          assert s.count(old)==1 or new in s
+          s=s.replace(old,new);p.write_text(s)
+          p=Path('v3/tests/company-ui.test.mjs');s=p.read_text()
+          if 'Form named id cannot override submission dispatch' not in s:
+            s+="\nimport fs from 'node:fs';\ntest('Form named id cannot override submission dispatch',()=>{const code=fs.readFileSync(new URL('../web/app.mjs',import.meta.url),'utf8');assert(code.includes(\"switch(formEl.getAttribute('id'))\"));assert(!code.includes('switch(formEl.id)'));});\n"
+            p.write_text(s)
+          PY
+          node --check v3/web/app.mjs
+          node --test v3/tests/company-ui.test.mjs
+      - name: Commit only checked source and regression
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- v3/web/app.mjs v3/tests/company-ui.test.mjs
+          if ! git diff --cached --quiet; then git commit -m '修正name=id表單欄位遮蔽提交分派，保留編集驗收斷言';git push origin HEAD:release/company-admin-3-1;fi
