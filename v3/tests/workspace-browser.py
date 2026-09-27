@@ -39,7 +39,7 @@ try:
    action(p,'board-pause');check(engine+' pause does not imply stopped collection','La recepción de encuestas continúa.' in p.locator('body').inner_text());action(p,'board-pause')
    nav(p,'points');check(engine+' location cards preserve city filter',p.locator('#workspace-station option').count()>0 and p.locator('.city-tabs [data-id=minga]').get_attribute('aria-pressed')=='true');action(p,'filter-reset')
    check(engine+' point controls visible',p.locator('.point-work').count()>0);p.screenshot(path=str(OUT/(engine+'-locales.png')),full_page=True)
-   nav(p,'people');check(engine+' team table includes name task receipt signal',all(x in p.locator('.responsive-table').inner_text() for x in ['Persona','Tarea actual','Recibidas','Señal reciente']))
+   nav(p,'people');check(engine+' team table includes name task receipt signal',all(x in p.locator('.responsive-table thead').text_content() for x in ['Persona','Tarea actual','Recibidas','Señal reciente']))
    action(p,'person-detail');check(engine+' person details keep assignment history','Historial de asignaciones' in p.locator('.modal').inner_text());action(p,'close-modal');p.screenshot(path=str(OUT/(engine+'-equipo.png')),full_page=True)
    nav(p,'access');action(p,'access-new');check(engine+' ordinary admin still cannot create administrators',p.locator('option[value=admin]').count()==0);action(p,'close-modal')
    nav(p,'registry');p.locator('.filter-summary').filter(has_text='coincidencias en').wait_for(timeout=30000);txt=p.locator('.filter-summary').filter(has_text='coincidencias en').inner_text();m=re.search(r'([\d.]+) coincidencias en ([\d.]+)',txt);assert m

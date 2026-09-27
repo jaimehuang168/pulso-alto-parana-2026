@@ -24,7 +24,7 @@ sections=[
 'Buscar en Equipo consulta nombre, código o local. En Registro también permite encontrar respuesta, código externo confirmado e identificador. Use Buscar o confirme el cambio del campo. Limpiar filtros vuelve al conjunto permitido.',
 'Las pestañas de permisos y la lista de revisión no son una consulta filtrada completa: la revisión muestra páginas recibidas del servidor. Para buscar todas las respuestas del operativo utilice Registro → Todas las respuestas.']),
 ('Administración: datos de empresa',[
-'Abra Administración → Empresa. Complete el nombre de la empresa, su identificación fiscal cuando corresponda, persona de contacto, correo y teléfono de soporte. Guarde mediante el botón del formulario.',
+'Abra Administración → Empresa. Complete el nombre de la empresa, persona de contacto, correo y teléfono de soporte. Guarde mediante el botón del formulario.',
 'Para corregir un dato, vuelva a abrir el campo, modifíquelo y guarde. Espere la confirmación del servidor antes de cerrar o pasar el trabajo a otra persona.',
 'Si otra persona modificó la misma configuración, recargue y concilie los cambios; no repita a ciegas sobre una versión antigua. El historial de cambios no se borra.',
 'Los accesos rápidos llevan a candidaturas, locales, personal, asignaciones y cuentas. Los datos incompletos pueden prepararse sin abrir recepción ni publicar resultados.']),
