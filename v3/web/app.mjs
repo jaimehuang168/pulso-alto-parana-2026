@@ -72,7 +72,7 @@ async function loadRegistry(){
  for(const qid of [...new Set(snap.data.filter(r=>r.candidate_id).map(r=>r.questionnaire_id))]){
   try{const a=await api.rpc('v3_report_config',{p_questionnaire:qid});if(a.confirmed)aliases[qid]=a;}catch(e){if(/SESSION|ACCOUNT_DISABLED/.test(e.message))throw e;}
  }
- S.registry=snap;S.aliases=aliases;S.ui.recordPage=0;
+ S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.ui=W.normalizeFilters(S.boot,S.ui);S.registry=snap;S.aliases=aliases;S.ui.recordPage=0;
 }
 async function changeFilter(key,value){S.ui={...S.ui,[key]:value,recordPage:0};if(key==='city')Object.assign(S.ui,{station:'',point:'',person:''});if(key==='station')Object.assign(S.ui,{point:'',person:''});if(key==='point')S.ui.person='';S.ui=W.normalizeFilters(S.boot,S.ui);render();}
 async function click(action,id,el){
