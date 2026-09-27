@@ -60,6 +60,12 @@ jobs:
           python -m py_compile docs/tutorials/capture.py docs/tutorials/render.py docs/tutorials/verify_player.py
           node --check docs/tutorials/site/tutorials.js
           python docs/tutorials/render.py --scenes docs/tutorials/scenes.json --images /tmp/tutorial-captures --out /tmp/tutorial-media --model /tmp/pulso-voice/es_MX-ald-medium.onnx
+      - name: Keep rendered candidate without granting acceptance
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pulso-rendered-media-candidate
+          path: /tmp/tutorial-media
+          retention-days: 7
       - name: Verify actual media playback and responsive teaching page
         run: python docs/tutorials/verify_player.py /tmp/tutorial-media
       - name: Package checked public teaching materials
