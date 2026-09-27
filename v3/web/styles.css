@@ -14,3 +14,5 @@
 .point-metrics{border-top:1px solid var(--line,#dbe5e8);padding:18px 0}.point-metrics summary{display:flex;flex-wrap:wrap;gap:12px;align-items:center;cursor:pointer;font-size:18px}.point-metrics summary strong{flex:1;min-width:160px;overflow-wrap:anywhere}.point-metrics small{display:block}.point-metrics .stats{margin-top:12px}
 
 .capture-actions:not(.ready){position:static;box-shadow:none}.capture-actions.ready{position:sticky;bottom:max(12px,env(safe-area-inset-bottom))}
+
+.table-scroll{overflow-x:auto} .table-scroll table{width:100%;border-collapse:collapse;min-width:520px} .table-scroll th,.table-scroll td{padding:12px;text-align:left;border-bottom:1px solid #d5e1e5} .card article{min-width:0}.card article h3{overflow-wrap:anywhere}
