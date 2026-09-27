@@ -77,8 +77,8 @@
         "zh": "檔案不新增問卷回答、不修改日期、不開放調查點，也不執行 v3_activate。既有 field-enrollment 介面不變，會使用更新後的資料庫驗證；伺服器金鑰仍只保留在 Supabase。"
       },
       {
-        "es": "Vuelva a entrar en /v3/. El propietario debe ver Super Admin · propietario y la sección Empresa e inicio. Si aparece Actualización de empresa pendiente, no fuerce permisos: verifique que el sitio y la base sean del mismo entorno y que se haya instalado 012.",
-        "zh": "重新登入 /v3/。擁有者應看見 Super Admin · propietario 及 Empresa e inicio。若出現 Actualización de empresa pendiente，不要強制更改權限；核對網站與資料庫是否屬同一環境，以及 012 是否已安裝。"
+        "es": "Vuelva a entrar en /v3/. El propietario debe ver Super Admin · propietario y la sección Empresa e inicio. Si aparece Actualización de empresa pendiente, no fuerce permisos: verifique que el sitio y la base sean del mismo entorno y que se haya instalado 012. El responsable técnico instala 013 una sola vez para delegar las confirmaciones. No vuelve a instalar 004–012 ni activa el operativo.",
+        "zh": "重新登入 /v3/。擁有者應看見 Super Admin · propietario 及 Empresa e inicio。若出現 Actualización de empresa pendiente，不要強制更改權限；核對網站與資料庫是否屬同一環境，以及 012 是否已安裝。 技術人員只需安裝一次 013 委派模組，不重跑 004–012，也不因此開收。"
       }
     ],
     "screen": null
@@ -89,8 +89,8 @@
     "title_zh": "角色與權限分工",
     "blocks": [
       {
-        "es": "Super Admin · propietario: conserva todas las funciones operativas de administración, crea nuevas cuentas administrativas y puede corregir, desactivar, reactivar o restablecer claves de los demás administradores. La cuenta designada es jaimehuang168@gmail.com. Su rol no se concede por escribir ese correo en una pantalla.",
-        "zh": "Super Admin · propietario：擁有所有作業管理功能，能建立其他管理者，並更正、停用、重新啟用或重設其他管理者密碼。指定帳號為 jaimehuang168@gmail.com；在畫面輸入該信箱不會自動取得權限。"
+        "es": "Super Admin · propietario: administra la plataforma y las cuentas; las tres confirmaciones de inicio corresponden a la empresa, crea nuevas cuentas administrativas y puede corregir, desactivar, reactivar o restablecer claves de los demás administradores. La cuenta designada es jaimehuang168@gmail.com. Su rol no se concede por escribir ese correo en una pantalla.",
+        "zh": "Super Admin · propietario：管理平台與帳號，三項啟用確認由公司負責，能建立其他管理者，並更正、停用、重新啟用或重設其他管理者密碼。指定帳號為 jaimehuang168@gmail.com；在畫面輸入該信箱不會自動取得權限。"
       },
       {
         "es": "Administrador de empresa: configura empresa, operativo, candidaturas, locales, puntos, personas, tareas, coordinadores y viewers; consulta y revisa registros y administra códigos e informes. No puede crear administradores, alterar al propietario ni administrar otra cuenta administrativa.",
@@ -429,8 +429,8 @@
         "zh": "保存政策應指定負責人及匯出、備份、現場資料處理方式。填文字不等於排定自動刪除；實際保存／清理作業須由技術負責人安排。"
       },
       {
-        "es": "Preflight de migración es una lectura. Registrar evidencias y activar V3 queda reservado al Super Admin; exige respaldo, aceptación real y tratamiento de colas V2. La activación cierra interfaces V2, pero deja los puntos sin abrir automáticamente.",
-        "zh": "Preflight de migración 是唯讀檢查。Registrar evidencias y activar V3 限 Super Admin，要求真實備份、驗收及舊待傳處理。啟用會關閉 V2 介面，但不會自動開放調查點。"
+        "es": "Preflight de migración es una lectura. En Empresa e inicio, el Admin de empresa guarda sus tres confirmaciones: colas V2, referencia de respaldo/restauración y aceptación firmada. Puede guardar campos pendientes y completar después. El Super Admin no rellena ni aprueba estas declaraciones. Confirmar como empresa y activar V3 utiliza el avance guardado, cierra las interfaces V2 y no abre encuestas automáticamente.",
+        "zh": "Preflight de migración 是唯讀檢查。公司 Admin 在 Empresa e inicio 填寫三項：V2 待傳處理、備份／還原參考、公司簽認驗收。可先儲存未完成內容，之後補齊。Super Admin 不代填、不另行核准這三項。Confirmar como empresa y activar V3 使用已儲存內容，關閉舊 V2 介面，但不自動開放收件。"
       },
       {
         "es": "Iniciar / reanudar operación requiere la fecha de campo y las condiciones del servidor. Luego abra cada punto preparado. Pausar toda la operación afecta nuevas capturas de todos los puntos; Cerrar operación registra el cierre y mantiene el tratamiento permitido de pendientes.",
@@ -725,8 +725,8 @@
         "zh": "回答：不可為改变統計而改寫原偏好；應附原因作廢本人錯誤或審核狀態。代號對照：依版本更正並重核发布。匯出：是凍結檔，樣本改變時用新截點重製。"
       },
       {
-        "es": "Este manual describe la versión 3.1 y el módulo 012. La evidencia automática demuestra solo los escenarios y entornos ensayados. La aplicación no sustituye la autorización del operativo, el método de muestreo ni la responsabilidad de la empresa sobre la difusión.",
-        "zh": "本手冊對應3.1與012。自動化證據只涵蓋實際測過的情境與環境。App不能替代現場授權、抽樣方法或企業對結果發布的責任。"
+        "es": "Este manual describe la versión 3.1.1 y los módulos 012–013. La evidencia automática demuestra solo los escenarios y entornos ensayados. La aplicación no sustituye la autorización del operativo, el método de muestreo ni la responsabilidad de la empresa sobre la difusión.",
+        "zh": "本手冊對應3.1.1與012–013。自動化證據只涵蓋實際測過的情境與環境。App不能替代現場授權、抽樣方法或企業對結果發布的責任。"
       }
     ],
     "screen": null
