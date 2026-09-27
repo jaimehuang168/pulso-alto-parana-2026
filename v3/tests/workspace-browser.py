@@ -19,6 +19,10 @@ def nav(p,name):
  action(p,'nav',name)
 def login(p,cred):
  p.goto('http://127.0.0.1:8044/v3/');p.locator('#login-form [name=code]').fill(cred['code']);p.locator('#login-form [name=password]').fill(cred['password']);p.locator('#login-form button[type=submit]').click();p.get_by_role('heading',name='Resultados',exact=True).wait_for(timeout=30000);idle(p)
+def shot(p,name):
+ # Long phone lists may exceed the engine's 32767-pixel raster dimension.
+ # Capture the actual viewport for those pages; data assertions still inspect all rows.
+ p.screenshot(path=str(OUT/name),full_page=p.evaluate('document.documentElement.scrollHeight<24000'))
 try:
  with sync_playwright() as P:
   for engine in ['chromium','webkit']:
@@ -28,25 +32,25 @@ try:
    check(engine+' five desktop areas',p.locator('.sidebar nav [data-group]').count()==5)
    check(engine+' four city cards in catalog order',p.locator('.city-card').evaluate_all('(a)=>a.map(x=>x.dataset.city)')==['cde','minga','hernandarias','franco'])
    text=p.locator('body').inner_text();check(engine+' Spanish interface without owner or technical role panel',not re.search('[\u3400-\u9fff]|Super Admin|jaimehuang168@gmail',text))
-   p.screenshot(path=str(OUT/(engine+'-results.png')),full_page=True)
+   shot(p,engine+'-results.png')
    for width in [320,390,768,1024,1920]:
     p.set_viewport_size({'width':width,'height':1000});check(engine+' results reflow '+str(width),p.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
-   p.set_viewport_size({'width':390,'height':844});check(engine+' five mobile work buttons',p.locator('.mobilebottom [data-group]:visible').count()==5);p.screenshot(path=str(OUT/(engine+'-mobile.png')),full_page=True)
+   p.set_viewport_size({'width':390,'height':844});check(engine+' five mobile work buttons',p.locator('.mobilebottom [data-group]:visible').count()==5);shot(p,engine+'-mobile.png')
    action(p,'filter-city','cde');check(engine+' city filter excludes other city cards',p.locator('.city-card').count()==1 and p.locator('.city-card').get_attribute('data-city')=='cde')
    options=p.locator('#workspace-station option').evaluate_all('(a)=>a.map(x=>x.value).filter(Boolean)');assert options
    p.locator('#workspace-station').select_option(options[0]);idle(p);check(engine+' selected location persists',p.locator('#workspace-station').input_value()==options[0])
    action(p,'filter-city','minga');check(engine+' changing city clears old location',p.locator('#workspace-station').input_value()=='' and p.locator('#workspace-point').input_value()=='')
    action(p,'board-pause');check(engine+' pause does not imply stopped collection','La recepción de encuestas continúa.' in p.locator('body').inner_text());action(p,'board-pause')
    nav(p,'points');check(engine+' location cards preserve city filter',p.locator('#workspace-station option').count()>0 and p.locator('.city-tabs [data-id=minga]').get_attribute('aria-pressed')=='true');action(p,'filter-reset')
-   check(engine+' point controls visible',p.locator('.point-work').count()>0);p.screenshot(path=str(OUT/(engine+'-locales.png')),full_page=True)
+   check(engine+' point controls visible',p.locator('.point-work').count()>0);shot(p,engine+'-locales.png')
    nav(p,'people');check(engine+' team table includes name task receipt signal',all(x in p.locator('.responsive-table thead').text_content() for x in ['Persona','Tarea actual','Recibidas','Señal reciente']))
-   action(p,'person-detail');check(engine+' person details keep assignment history','Historial de asignaciones' in p.locator('.modal').inner_text());action(p,'close-modal');p.screenshot(path=str(OUT/(engine+'-equipo.png')),full_page=True)
+   action(p,'person-detail');check(engine+' person details keep assignment history','Historial de asignaciones' in p.locator('.modal').inner_text());action(p,'close-modal');shot(p,engine+'-equipo.png')
    nav(p,'access');action(p,'access-new');check(engine+' ordinary admin still cannot create administrators',p.locator('option[value=admin]').count()==0);action(p,'close-modal')
    nav(p,'registry');p.locator('.filter-summary').filter(has_text='coincidencias en').wait_for(timeout=30000);txt=p.locator('.filter-summary').filter(has_text='coincidencias en').inner_text();m=re.search(r'([\d.]+) coincidencias en ([\d.]+)',txt);assert m
    matches,total=[int(x.replace('.','')) for x in m.groups()];check(engine+' complete registry is not first UI page',matches==total and total>0 and p.locator('.responsive-table tbody tr').count()==min(50,total))
    with p.expect_download() as dl:action(p,'registry-export')
    content=Path(dl.value.path()).read_text(encoding='utf-8-sig');rows=list(csv.reader(io.StringIO(content)));check(engine+' CSV contains every matching row plus metadata and header',len(rows)==total+2)
-   check(engine+' exported internal rows are marked internal',rows[0][0]=='USO INTERNO');p.screenshot(path=str(OUT/(engine+'-registro.png')),full_page=True)
+   check(engine+' exported internal rows are marked internal',rows[0][0]=='USO INTERNO');shot(p,engine+'-registro.png')
    p.locator('#record-from').fill('2100-01-01T00:00');p.locator('#record-from').press('Tab');idle(p);check(engine+' received-date filter applies to entire snapshot','0 coincidencias' in p.locator('.filter-summary').filter(has_text='coincidencias en').inner_text())
    action(p,'filter-reset');nav(p,'company');check(engine+' company edit form remains available',p.locator('#company-form').count()==1);check(engine+' no activation form or private manual links',p.locator('[data-action=activate],[data-action=company-activate],#company-readiness-form,a[href*="manual-es-zh"]').count()==0)
    check(engine+' deleted bilingual web route is not served',ctx.request.get('http://127.0.0.1:8044/v3/manual-es-zh.html').status==404)
@@ -54,7 +58,7 @@ try:
    check(engine+' no browser execution errors',not api_errors);ctx.close();browser.close()
 except Exception as e:
  checks.append({'name':'Workspace browser flow','pass':False,'error':str(e)[:800]})
- try:p.screenshot(path=str(OUT/'FAILURE.png'),full_page=True)
+ try:p.screenshot(path=str(OUT/'FAILURE.png'),full_page=False)
  except:pass
 finally:
  srv.shutdown();d={'scope':'Real local Auth and HTTP in Chromium/WebKit. Synthetic data only. Not physical phones or production.','passed':sum(x['pass'] for x in checks),'failed':sum(not x['pass'] for x in checks),'checks':checks};(OUT/'results.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print(json.dumps(d,ensure_ascii=False,indent=2))
