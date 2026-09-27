@@ -12,12 +12,12 @@ try:
  with sync_playwright() as p:
   browser=p.chromium.launch();ctx=browser.new_context(viewport={'width':1440,'height':1050});page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.goto('http://127.0.0.1:8073/');page.locator('article').nth(1).wait_for(timeout=30000);check('Two guides loaded',page.locator('article').count()==2)
   for v in data['videos']:
-   card=page.locator('#'+v['id']);video=card.locator('video');video.evaluate('(v)=>v.load()');page.wait_for_function('(id)=>document.querySelector("#"+id+" video").readyState>=1',v['id'],timeout=60000)
+   card=page.locator('#'+v['id']);video=card.locator('video');video.evaluate('(v)=>v.load()');page.wait_for_function('(id)=>document.querySelector("#"+id+" video").readyState>=1',arg=v['id'],timeout=60000)
    check(v['id']+' duration',abs(video.evaluate('(v)=>v.duration')-v['duration_seconds'])<1)
-   card.locator('.chapters button').nth(2).click();page.wait_for_function('(id)=>{const v=document.querySelector("#"+id+" video");return !v.paused&&v.currentTime>2}',v['id'],timeout=20000)
+   card.locator('.chapters button').nth(2).click();page.wait_for_function('(id)=>{const v=document.querySelector("#"+id+" video");return !v.paused&&v.currentTime>2}',arg=v['id'],timeout=20000)
    check(v['id']+' chapter seek',abs(video.evaluate('(v)=>v.currentTime')-v['chapters'][2]['start'])<15)
    card.locator('select').select_option('1.25');check(v['id']+' playback speed',video.evaluate('(v)=>v.playbackRate')==1.25)
-   video.evaluate('(v)=>{v.textTracks[0].mode="hidden";}');page.wait_for_function('(id)=>document.querySelector("#"+id+" video").textTracks[0].cues?.length>0',v['id'],timeout=20000)
+   video.evaluate('(v)=>{v.textTracks[0].mode="hidden";}');page.wait_for_function('(id)=>document.querySelector("#"+id+" video").textTracks[0].cues?.length>0',arg=v['id'],timeout=20000)
    check(v['id']+' synchronized subtitle cues',video.evaluate('(v)=>v.textTracks[0].cues.length')==v['checks']['caption_cues']);video.evaluate('(v)=>v.pause()')
    for key in ['file','poster','subtitles','srt','transcript']:check(v['id']+' local '+key,(a.folder/v[key]).is_file())
   page.screenshot(path=str(a.folder/'player-desktop.png'),full_page=False)
