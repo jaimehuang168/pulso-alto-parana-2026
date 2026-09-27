@@ -29,7 +29,9 @@ jobs:
           for name,expected in d['base_hashes'].items():
             assert '..' not in PurePosixPath(name).parts and not name.startswith('/')
             assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==expected,name
-          patch=Path('/tmp/company-handoff.patch');patch.write_text(d['patch'])
+          # Original JSON has no terminal newline; preserve that fact in a valid unified diff.
+          assert d['patch'].count('-]+]\n')==1
+          patch=Path('/tmp/company-handoff.patch');patch.write_text(d['patch'].replace('-]+]\n','-]\n\\ No newline at end of file\n+]\n'))
           subprocess.run(['git','apply','--check',str(patch)],check=True)
           subprocess.run(['git','apply',str(patch)],check=True)
           for name,text in d['files'].items():
