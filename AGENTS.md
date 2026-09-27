@@ -16,3 +16,10 @@
 - 013/014 由 Super Admin 以 V3_1_DIRECT_USE.sql 一次檢查更新。公司與使用者直接登入，不再有 Activate 或三項必填聲明；不虛構已完成驗收，不自動開收或發布。
 - 備份還原的技術執行由 Super Admin 負責；公司只記錄無憑證的參考編號。
 - App Super Admin 不是自動取得 Supabase 平台權限；平台成員須獨立管理。未查核成員清單時，不能宣稱只有擁有者可進入平台的設定已驗證。
+
+## Interfaz y documentación 3.1.3
+
+- Keep the application and its public manual entirely in Spanish.
+- Keep bilingual owner manuals outside the public repository, build artifacts and Pages.
+- Present five work areas without owner-role banners; authorization remains server-side.
+- Do not reset local survey storage or reintroduce activation. This UI release has no new SQL migration.
