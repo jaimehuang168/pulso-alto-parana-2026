@@ -2,10 +2,10 @@ import {serviceWorkerSource} from './service-worker-source.mjs';
 import fs from 'node:fs/promises';import path from 'node:path';import {build} from 'esbuild';import {fileURLToPath} from 'node:url';import crypto from 'node:crypto';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url))),repo=path.dirname(root),demo=process.argv.includes('--demo'),out=path.join(root,demo?'preview':'dist');await fs.rm(out,{recursive:true,force:true});await fs.mkdir(path.join(out,'vendor'),{recursive:true});
 await build({entryPoints:[path.join(root,'web/app.mjs')],bundle:true,format:'esm',target:['es2022'],outfile:path.join(out,'app.js'),external:['./simulation.mjs'],minify:false,sourcemap:false});
-for(const f of ['index.html','styles.css','manifest.webmanifest','icon.svg'])await fs.copyFile(path.join(root,'web',f),path.join(out,f));
+for(const f of ['index.html','styles.css','workspace.css','manifest.webmanifest','icon.svg'])await fs.copyFile(path.join(root,'web',f),path.join(out,f));
 const url=process.env.SUPABASE_URL||'',key=process.env.SUPABASE_PUBLISHABLE_KEY||'';
 if(key.startsWith('sb_secret_')||(key.split('.').length===3&&JSON.parse(Buffer.from(key.split('.')[1],'base64url')).role!=='anon'))throw new Error('Public configuration rejected');
-await fs.writeFile(path.join(out,'config.js'),'window.PULSO_V3_CONFIG='+JSON.stringify({supabaseUrl:demo?'':url,publishableKey:demo?'':key,environment:demo?'isolated-simulation':process.env.PULSO_ENVIRONMENT||'staging-unconfigured',build:'3.1.2',simulation:demo})+';');
+await fs.writeFile(path.join(out,'config.js'),'window.PULSO_V3_CONFIG='+JSON.stringify({supabaseUrl:demo?'':url,publishableKey:demo?'':key,environment:demo?'isolated-simulation':process.env.PULSO_ENVIRONMENT||'staging-unconfigured',build:'3.1.3',simulation:demo})+';');
 const vendor=process.env.SUPABASE_VENDOR_FILE||path.join(repo,'web/supabase-vendor.js');await fs.copyFile(vendor,path.join(out,'vendor/supabase.js'));
 if(demo){await fs.writeFile(path.join(out,'qa-harness.html'),'<!doctype html><html><meta charset="utf-8"><title>Isolated QA harness</title><body>Isolated QA only.</body></html>');await build({entryPoints:[path.join(root,'tests/browser-harness.mjs')],bundle:true,format:'esm',platform:'browser',target:'es2022',outfile:path.join(out,'qa-harness.js')});await build({entryPoints:[path.join(root,'web/simulation.mjs')],bundle:true,format:'esm',target:'es2022',outfile:path.join(out,'simulation.mjs'),platform:'browser',minify:true});
  const pg=path.dirname(fileURLToPath(import.meta.resolve('@electric-sql/pglite')));for(const f of ['pglite.wasm','initdb.wasm','pglite.data'])await fs.copyFile(path.join(pg,f),path.join(out,f));
@@ -19,7 +19,7 @@ if(demo){await fs.writeFile(path.join(out,'qa-harness.html'),'<!doctype html><ht
  sql+=`UPDATE pulso_v3.questionnaires SET items=(SELECT jsonb_agg(jsonb_build_object('id',x.v->>'id','name','Candidatura DEMO '||x.i,'list','Lista DEMO '||x.i)) FROM jsonb_array_elements(items) WITH ORDINALITY x(v,i)) WHERE state='draft';`;
  await fs.writeFile(path.join(out,'simulation-install.sql'),sql);
 }
-for(const name of ['templates','manual-es.html','manual-es-zh.html']){try{await fs.cp(path.join(root,'web',name),path.join(out,name),{recursive:true});}catch{}}
+for(const name of ['templates','manual-es.html']){try{await fs.cp(path.join(root,'web',name),path.join(out,name),{recursive:true});}catch{}}
 const files=(await fs.readdir(out)).filter(f=>/\.(js|css|html|svg|webmanifest)$/.test(f));const hash=crypto.createHash('sha256');for(const f of files)hash.update(await fs.readFile(path.join(out,f)));const cache='pulso-v3-'+hash.digest('hex').slice(0,16);
 await fs.writeFile(path.join(out,'sw.js'),serviceWorkerSource(cache,files));
-await fs.writeFile(path.join(out,'build-info.json'),JSON.stringify({version:'3.1.2',simulation:demo,static_cache:cache,configured:!!url&&!demo,created_at:new Date().toISOString()},null,2));console.log(out);
+await fs.writeFile(path.join(out,'build-info.json'),JSON.stringify({version:'3.1.3',simulation:demo,static_cache:cache,configured:!!url&&!demo,created_at:new Date().toISOString()},null,2));console.log(out);

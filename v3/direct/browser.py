@@ -4,9 +4,8 @@ R=Path(__file__).resolve().parents[2]
 p=R/'v3/tests/company-native-browser.py';s=p.read_text()
 needle="def idle(page):"
 extra="""def direct_checks(page,engine):
- page.locator('[data-company-readiness]').wait_for(timeout=20000)
- page.get_by_text('Acceso directo V3.1',exact=True).wait_for(timeout=20000)
- check(engine+' authenticated page shows direct V3.1 use',True)
+ page.locator('#company-form').wait_for(timeout=20000)
+ check(engine+' authenticated company form is immediately available',True)
  check(engine+' no activation or mandatory readiness form',page.locator('[data-action=activate],[data-action=company-activate],#company-readiness-form').count()==0)
 """
 assert needle in s;s=s.replace(needle,extra+needle,1)

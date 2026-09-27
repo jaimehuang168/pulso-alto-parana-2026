@@ -1,6 +1,6 @@
 import {formatAsuncion} from './asuncion-time.mjs';
 /** Pure validation: Spanish UI, immutable payloads, no voter identifiers. */
-export const CLIENT=30000, VERSION='3.1.0';
+export const CLIENT=30000, VERSION='3.1.3';
 export const CITIES=[{id:'cde',name:'Ciudad del Este',code:'CDE'},{id:'minga',name:'Minga Guazú',code:'MGA'},{id:'hernandarias',name:'Hernandarias',code:'HER'},{id:'franco',name:'Presidente Franco',code:'PFR'}];
 export const OUTCOMES={candidate:'Candidatura',blank:'Voto en blanco',invalid:'Voto nulo',undisclosed:'No revela su voto',refused:'Rechaza la encuesta'};
 export const STATE={draft:'Borrador',approved:'Aprobado',open:'Abierto',paused:'En pausa',closed:'Cerrado',pending:'Pendiente',acknowledged:'Confirmado',active:'En servicio',draining:'Solo envío pendiente',ended:'Finalizado',suspended:'Suspendido',retired:'Retirado',running:'En operación',setup:'Preparación',accepted:'Aceptada',pending_review:'En revisión',excluded:'Excluida',published:'Publicada',superseded:'Versión anterior'};
@@ -30,18 +30,18 @@ export function validateCapture(e,pack,now=Date.now()){
  return true;
 }
 export function assertReceipt(e,r){if(!r||r.response_id!==e.id||!uuidOK(r.receipt_id)||!['accepted','pending_review','excluded'].includes(r.disposition)||!Number.isFinite(Date.parse(r.received_at))||! /^[a-f0-9]{64}$/.test(r.payload_hash||''))throw new Error('V3_RECEIPT_UNCONFIRMED');return r;}
-export function allowedPages(role){return {admin:['overview','company','points','people','tasks','catalog','access','review','paper','imports','exports','settings','guide'],coordinator:['overview','points','people','tasks','paper','guide'],interviewer:['task','capture','queue','records','guide'],viewer:['results','guide']}[role]||[];}
+export function allowedPages(role){return {admin:['overview','registry','company','points','people','tasks','catalog','access','review','paper','imports','exports','settings','guide'],coordinator:['overview','points','people','tasks','paper','guide'],interviewer:['task','capture','queue','records','guide'],viewer:['results','guide']}[role]||[];}
 export function hasCap(boot,cap,d,p=null){if(boot?.actor.role==='admin')return true;const now=Date.now();return (boot?.grants||[]).some(g=>g.user_id===boot.actor.user_id&&g.district_id===d&&(!g.point_id||g.point_id===p)&&g.capabilities.includes(cap)&&!g.revoked_at&&Date.parse(g.valid_from)<=now&&Date.parse(g.valid_until)>now);}
 const ERROR_TEXT={
- V3_SUPER_ADMIN_ONLY:['Solo Super Admin','La gestión de cuentas administrativas está reservada al propietario.'],
- V3_COMPANY_ADMIN_ONLY:['Confirmación de la empresa','Estas declaraciones corresponden al Admin de la empresa, no al Super Admin.'],
+ V3_SUPER_ADMIN_ONLY:['Acceso restringido','Esta cuenta no tiene permiso para gestionar administradores.'],
+ V3_COMPANY_ADMIN_ONLY:['Confirmación de la empresa','Estas declaraciones corresponden al Admin de la empresa, no al administración de la plataforma.'],
  V3_COMPANY_CONFIRMATIONS_PENDING:['Confirmaciones pendientes','Complete y guarde las tres confirmaciones reales de la empresa antes de activar.'],
  V3_USE_COMPANY_CONFIRMATIONS:['Abra Empresa e inicio','La empresa gestiona las confirmaciones en Empresa e inicio.'],
  V3_SAVE_READINESS_FIRST:['Guarde los cambios','Hay cambios sin guardar en las confirmaciones de la empresa.'],
  V3_READINESS_ALREADY_ACTIVATED:['V3 ya está activado','No se sobrescriben las declaraciones de una activación registrada.'],
  V3_INVALID_READINESS:['Revise el formulario','Los campos o la versión de las confirmaciones no son válidos.'],
  V3_COMPANY_UPGRADE_REQUIRED:['Falta actualización','El responsable técnico debe instalar el módulo de empresa antes de crear accesos.'],
- V3_CREATE_ADMIN_SEPARATELY:['Crear cuenta administrativa nueva','Use Crear acceso con el Super Admin. No convierta una identidad de campo en administrador.'],
+ V3_CREATE_ADMIN_SEPARATELY:['Crear cuenta administrativa nueva','Use Crear acceso con la administración. No convierta una identidad de campo en administrador.'],
  V3_COMPANY_INVALID:['Revise los datos','Compruebe el nombre, correo y límites de longitud. No se guardaron cambios.'],
  V3_PROTECTED_ACCOUNT:['Cuenta protegida','No puede desactivar ni cambiar el rol de esta cuenta. Para su propia contraseña use Cambiar mi contraseña.'],
  V3_ACCOUNT_DISABLED:['Cuenta no habilitada','Su acceso está desactivado. Contacte a la administración. No cree otra cuenta.'],
