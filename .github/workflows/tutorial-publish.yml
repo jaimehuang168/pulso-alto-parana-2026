@@ -1,0 +1,61 @@
+name: Publish verified Spanish tutorials
+on:
+  push:
+    branches: [docs/spanish-video-tutorials]
+    paths: ['.github/workflows/tutorial-publish.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: pulso-tutorials-release-313
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/docs/spanish-video-tutorials'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Validate exact accepted run and teaching bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/approved-tutorials /tmp/tutorial-release-evidence
+          python - <<'PY'
+          import json,subprocess,pathlib
+          p=json.load(open('docs/tutorials/release.lock.json'))
+          assert p['repository']=='jaimehuang168/pulso-alto-parana-2026' and p['tag']=='pulso-tutorials-3.1.3'
+          r=json.loads(subprocess.check_output(['gh','api',f"repos/{p['repository']}/actions/runs/{p['render_run']}"],text=True))
+          assert r['status']=='completed' and r['conclusion']=='success' and r['head_sha']==p['render_commit']
+          subprocess.run(['gh','run','download',str(p['render_run']),'--repo',p['repository'],'--name','pulso-spanish-tutorials','--dir','/tmp/approved-tutorials'],check=True)
+          subprocess.run(['python','docs/tutorials/install_bundle.py','/tmp/approved-tutorials/'+p['archive'],'/tmp/verified-tutorials','--sha256',p['archive_sha256'],'--render-commit',p['render_commit'],'--render-run',str(p['render_run'])],check=True)
+          pathlib.Path('/tmp/tutorial-release-evidence/accepted.json').write_text(json.dumps({'run':p['render_run'],'commit':p['render_commit'],'archive_sha256':p['archive_sha256'],'status':'validated_before_publication'},indent=2))
+          PY
+      - name: Create a durable release without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json,subprocess,pathlib,tempfile,hashlib
+          p=json.load(open('docs/tutorials/release.lock.json'));repo=p['repository'];tag=p['tag']
+          existing=subprocess.run(['gh','release','view',tag,'--repo',repo,'--json','tagName'],capture_output=True,text=True)
+          if existing.returncode:
+              notes=pathlib.Path('/tmp/tutorial-release-notes.md')
+              notes.write_text('Tutoriales en español para Pulso 3.1.3.\n\nDos videos: administración de empresa y encuestadores/usuarios de lectura. Narración sintética, subtítulos, guion y 32 capítulos. Pantallas de formación con datos ficticios; no son resultados electorales ni certificación de dispositivos físicos.\n\nVerificación: 25 comprobaciones de reproducción aprobadas, dos MP4 H.264/AAC decodificados por completo.\n\nZIP SHA-256: '+p['archive_sha256']+'\n')
+              subprocess.run(['gh','release','create',tag,'/tmp/approved-tutorials/'+p['archive'],'--repo',repo,'--target',p['render_commit'],'--title','Pulso 3.1.3 · Tutoriales en español','--notes-file',str(notes),'--latest=false'],check=True)
+          with tempfile.TemporaryDirectory() as d:
+              subprocess.run(['gh','release','download',tag,'--repo',repo,'--pattern',p['archive'],'--dir',d],check=True)
+              assert hashlib.sha256((pathlib.Path(d)/p['archive']).read_bytes()).hexdigest()==p['archive_sha256'],'Existing or uploaded asset differs; never overwrite silently'
+          release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{tag}'],text=True))
+          assets=[a for a in release['assets'] if a['name']==p['archive']];assert len(assets)==1 and assets[0]['state']=='uploaded'
+          evidence={'status':'published_and_download_readback_verified','release_url':release['html_url'],'tag':tag,'render_commit':p['render_commit'],'render_run':p['render_run'],'asset_url':assets[0]['browser_download_url'],'asset_size':assets[0]['size'],'archive_sha256':p['archive_sha256'],'production_database_changed':False}
+          pathlib.Path('/tmp/tutorial-release-evidence/release.json').write_text(json.dumps(evidence,indent=2));print(json.dumps(evidence,indent=2))
+          PY
+          git archive --format=zip HEAD -o /tmp/tutorial-release-evidence/source-reviewed.zip
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-tutorial-release-evidence
+          path: /tmp/tutorial-release-evidence
+          retention-days: 14
