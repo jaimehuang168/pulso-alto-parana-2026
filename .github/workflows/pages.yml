@@ -21,10 +21,10 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     env:
-      ACCEPTED: 46b48ebcea2c2f891c8b075a14e6a43bfe521005
+      ACCEPTED: d548f089951b8b926262b5b77670082cb5942dd5
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
-      PULSO_ENVIRONMENT: company-3.1-awaiting-database-installation
+      PULSO_ENVIRONMENT: company-3.1.1-handoff-awaiting-module-013
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0
@@ -35,7 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/${{ github.repository }}/actions/runs/36327863491 > /tmp/company-accepted.json
+          gh api repos/${{ github.repository }}/actions/runs/36335951091 > /tmp/company-accepted.json
           python - <<'PY'
           import json,os
           r=json.load(open('/tmp/company-accepted.json'))
@@ -53,6 +53,7 @@ jobs:
           node v3/scripts/check.mjs
           node --test v3/tests/*.test.mjs
           node v3/tests/company.mjs
+          node v3/tests/company-handoff.mjs
       - name: Build matching company field App, monitor and test center
         run: |
           python docs/build-company-manuals.py
@@ -67,19 +68,19 @@ jobs:
           python - <<'PY'
           import pathlib,json,subprocess,hashlib,re
           es=pathlib.Path('web/v3/manual-es.html').read_text();bi=pathlib.Path('web/v3/manual-es-zh.html').read_text()
-          assert 'MANUAL 3.1' in es and 'MANUAL 3.1' in bi
+          assert 'MANUAL 3.1.1' in es and 'MANUAL 3.1.1' in bi
           assert not re.search('[\u3400-\u9fff]',es)
           assert len(re.findall(r'<section id="s\d+',es))==26 and len(re.findall(r'<section id="s\d+',bi))==26
           commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           files={str(p.relative_to('web')):hashlib.sha256(p.read_bytes()).hexdigest() for p in [pathlib.Path('web/v3/app.js'),pathlib.Path('web/v3/manual-es.html'),pathlib.Path('web/v3/manual-es-zh.html')]}
-          result={'version':'3.1.0','source_commit':commit,'accepted_runtime':'46b48ebcea2c2f891c8b075a14e6a43bfe521005','native_acceptance_run':36327863491,'database_migration_executed':False,'super_admin_production_grant_verified':False,'required_database_module':12,'physical_device_certification':False,'hosting_scope':'existing preview; commercial hosting suitability requires owner review','files':files}
+          result={'version':'3.1.1','source_commit':commit,'accepted_runtime':'d548f089951b8b926262b5b77670082cb5942dd5','native_acceptance_run':36335951091,'database_migration_executed':False,'super_admin_production_grant_verified':False,'required_database_module':13,'confirmation_responsibility':'company_admin','company_approval_created_by_deploy':False,'physical_device_certification':False,'hosting_scope':'existing preview; commercial hosting suitability requires owner review','files':files}
           pathlib.Path('web/company-release.json').write_text(json.dumps(result,indent=2));pathlib.Path('/tmp/pulso-company-release/company-release.json').write_text(json.dumps(result,indent=2))
           PY
           git archive --format=zip HEAD -o /tmp/pulso-company-release/source.zip
           tar -C web/v3 -czf /tmp/pulso-company-release/company-frontend.tar.gz .
           tar -C web/v3-demo -czf /tmp/pulso-company-release/company-demo.tar.gz .
-          cp supabase/V3_1_COMPANY_UPGRADE.sql /tmp/pulso-company-release/
-          echo '公司3.1前端與雙語手冊已建置。未執行正式SQL、未授權正式Super Admin、未開收、未新增付費資源。' >> "$GITHUB_STEP_SUMMARY"
+          cp supabase/V3_1_COMPANY_UPGRADE.sql supabase/V3_1_1_COMPANY_HANDOFF.sql /tmp/pulso-company-release/
+          echo '公司3.1.1前端已建置。三項確認由公司Admin填寫；未執行正式013、未代填證據、未開收、未新增付費資源。' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.0
         with:
           name: pulso-company-release
@@ -117,7 +118,7 @@ jobs:
           for attempt in range(30):
             try:
               release=json.load(urllib.request.urlopen(base+'company-release.json?at='+str(time.time()),timeout=15))
-              if release['version']=='3.1.0' and release['accepted_runtime']=='46b48ebcea2c2f891c8b075a14e6a43bfe521005':break
+              if release['version']=='3.1.1' and release['accepted_runtime']=='d548f089951b8b926262b5b77670082cb5942dd5':break
             except Exception:pass
             time.sleep(3)
           else:raise RuntimeError('Expected company release not published')
@@ -134,7 +135,8 @@ jobs:
             page.route('**/*.supabase.co/**',lambda route:route.abort())
             page.goto(base+'v3-demo/');page.get_by_role('button',name='Administrador',exact=True).wait_for(timeout=120000);page.get_by_role('button',name='Administrador',exact=True).click();page.get_by_role('heading',name='Centro de operación').wait_for(timeout=45000)
             page.locator('#mobile-nav').select_option('company');page.locator('#company-form').wait_for();assert 'Super Admin' in page.locator('body').inner_text();assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
-            page.screenshot(path='evidence/company-demo-mobile.png',full_page=True);checks.append({'name':'Synthetic company self-service mobile view','pass':True})
+            page.locator('[data-company-readiness]').wait_for();assert page.locator('#company-readiness-form').count()==0 and page.locator('[data-action=activate]').count()==0;assert 'Super Admin no debe completar' in page.locator('[data-company-readiness]').inner_text()
+            page.screenshot(path='evidence/company-demo-mobile.png',full_page=True);checks.append({'name':'Super Admin has status only; no attestation form or old activate modal','pass':True})
             for name in ['manual-es.html','manual-es-zh.html']:
               assert page.goto(base+'v3/'+name).status==200;assert page.locator('section[id^=s]').count()==26;checks.append({'name':'Complete manual '+name,'pass':True})
             page.goto(base+'pruebas/?v=2');page.locator('#storage-retry').wait_for(timeout=20000) if page.locator('#storage-retry').count() else page.get_by_role('button',name='Repetir solo almacenamiento').wait_for(timeout=20000)

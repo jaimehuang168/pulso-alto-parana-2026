@@ -8,9 +8,10 @@ export async function createSimulation(){
  const as=async(u,s,fn)=>{await db.exec('BEGIN;SET LOCAL ROLE authenticated;');try{await db.query("select set_config('request.jwt.claims',$1,true)",[JSON.stringify({sub:u,session_id:s,role:'authenticated'})]);const v=await fn();await db.exec('COMMIT');return v;}catch(e){await db.exec('ROLLBACK');throw e;}};
  const call=async(name,args={})=>{if(!/^v3_[a-z_]+$/.test(name)||Object.keys(args).some(x=>!/^p_[a-z_]+$/.test(x)))throw new Error('V3_INVALID_RPC');return as(user,session,async()=>Object.values((await db.query(`select public.${name}(${Object.keys(args).map((k,i)=>k+'=> $'+(i+1)).join(',')})`,Object.values(args))).rows[0])[0]);};
  const command=(a,d,r=0)=>call('v3_command',{p_action:a,p_data:d,p_request_id:uuid(),p_expected:r});
+ const companyAdmin=uuid(),companySession=uuid();await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[companyAdmin,'company-demo@example.invalid']);await db.query('insert into auth.sessions values($1,$2)',[companySession,companyAdmin]);await db.query("insert into pulso_v3.actors(user_id,code,display_name,role,enrolled) values($1,'ADMIN-DEMO','Administración DEMO','admin',true)",[companyAdmin]);
  const today=(await db.query("select (now() at time zone 'America/Asuncion')::date::text as day")).rows[0].day;
  await command('operation.save',{title:'SIMULACIÓN · Pulso V3',contest:'Intendencia municipal',fieldwork_date:today,retention_policy:'Datos sintéticos; se descartan al recargar.'},1);
- await call('v3_activate',{p_legacy_outbox_handled:true,p_backup_reference:'Simulación aislada sin base externa',p_acceptance_reference:'Aceptación simulada no válida para producción'});
+ user=companyAdmin;session=companySession;await call('v3_company_readiness_save',{p_outbox_handled:true,p_backup_reference:'Simulación aislada sin base externa',p_acceptance_reference:'Aceptación simulada no válida para producción',p_expected:1,p_request_id:uuid()});await call('v3_company_activate',{p_expected:2,p_request_id:uuid()});user=ADMIN;session=SESSION;
  for(const [idx,d]of CITIES.entries()){
   const site=(await command('station.save',{district_id:d.id,code:'DEMO-'+d.code,name:'Centro DEMO '+d.code,address:'Dirección sintética para demostración'})).id;
   const point=(await command('point.save',{station_id:site,code:'DEMO-PT-'+d.code,label:'Acceso DEMO '+d.code})).id;
@@ -30,7 +31,7 @@ export async function createSimulation(){
  const co=uuid(),cs=uuid(),viewer=uuid(),vs=uuid();for(const [u,s,c,r]of [[co,cs,'COORD-DEMO','coordinator'],[viewer,vs,'VIEW-DEMO','viewer']]){await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[u,c.toLowerCase()+'@example.invalid']);await db.query('insert into auth.sessions values($1,$2)',[s,u]);await db.query('insert into pulso_v3.actors(user_id,code,display_name,role,enrolled) values($1,$2,$2,$3,true)',[u,c,r]);}
  await command('grant.save',{user_id:co,district_id:'cde',capabilities:['operations','recruit','assign','manage_points','control_points'],valid_until:new Date(Date.now()+86400000).toISOString()});
  await command('grant.save',{user_id:viewer,district_id:'cde',capabilities:['view_results'],valid_until:new Date(Date.now()+86400000).toISOString()});
- const companyAdmin=uuid(),companySession=uuid();await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[companyAdmin,'company-demo@example.invalid']);await db.query('insert into auth.sessions values($1,$2)',[companySession,companyAdmin]);await db.query("insert into pulso_v3.actors(user_id,code,display_name,role,enrolled) values($1,'ADMIN-DEMO','Administración DEMO','admin',true)",[companyAdmin]);
+
  const accounts=[{id:companyAdmin,session:companySession,label:'Admin de empresa',code:'ADMIN-DEMO'},{id:ADMIN,session:SESSION,label:'Administrador',code:'COORD-01'},{id:co,session:cs,label:'Coordinador CDE',code:'COORD-DEMO'},{id:viewer,session:vs,label:'Viewer CDE',code:'VIEW-DEMO'},...peopleAccounts];
  const enrollmentTokens=new Map();const api={accounts,simulation:true,
   session:async()=>null,

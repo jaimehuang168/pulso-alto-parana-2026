@@ -1,3 +1,4 @@
+import {isCompanyAdmin} from './modules/company-readiness.mjs';
 import * as C from './modules/core.mjs';
 import * as V from './modules/views.mjs';
 import {CloudAPI} from './modules/api.mjs';
@@ -6,7 +7,7 @@ import {parseFile} from './modules/importer.mjs';
 import QRCode from 'qrcode';
 const config=window.PULSO_V3_CONFIG||{},E=C.esc;
 let api=new CloudAPI(config), vault=null;
-const S={boot:null,page:'overview',error:null,lastSync:null,offline:!navigator.onLine,queue:[],pack:null,choice:null,geo:{status:'not_requested'},started:null,busy:false,refreshing:false,syncing:false,modal:false,unlock:false,vaultExists:false,loginCode:'',session:null,join:null,preview:null,records:[],moreRecords:false,simulation:config.simulation===true,demoAccounts:[]};
+const S={boot:null,page:'overview',error:null,lastSync:null,offline:!navigator.onLine,queue:[],pack:null,choice:null,geo:{status:'not_requested'},started:null,busy:false,refreshing:false,syncing:false,modal:false,unlock:false,vaultExists:false,loginCode:'',session:null,join:null,preview:null,records:[],moreRecords:false,simulation:config.simulation===true,demoAccounts:[],readiness:null,readinessError:null};
 const environment=()=>config.supabaseUrl||'isolated-simulation-v3';
 const device=()=>{let id=localStorage.getItem('pulso-v3-device');if(!C.uuidOK(id)){id=C.uuid();localStorage.setItem('pulso-v3-device',id);}return id;};
 function setBusy(value){S.busy=value;document.getElementById('app').setAttribute('aria-busy',String(value));}
@@ -27,18 +28,26 @@ const reason=(defaultText='')=>V.textarea('Motivo / referencia','reason',default
 const currentPerson=id=>S.boot.people.find(p=>p.id===id),currentPoint=id=>S.boot.points.find(p=>p.id===id),currentTask=id=>S.boot.assignments.find(p=>p.id===id),currentActor=id=>S.boot.actors.find(p=>p.user_id===id);
 const permittedCity=()=>V.cities(S.boot).filter(d=>S.boot.actor.role==='admin'||(S.boot.grants||[]).some(g=>g.district_id===d.id&&!g.revoked_at));
 async function openVault(user){vault=new Vault(environment(),user);await vault.open();S.vaultExists=await vault.exists();S.unlock=true;S.error=null;render();}
-async function enter(session){S.session=session;S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.loginCode=S.boot.actor.code;S.error=null;S.page=C.allowedPages(S.boot.actor.role)[0];S.lastSync=new Date().toISOString();localStorage.setItem('pulso-v3-last',JSON.stringify({user:session.user.id,environment:environment()}));
+async function enter(session){S.readiness=null;S.readinessError=null;S.session=session;S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.loginCode=S.boot.actor.code;S.error=null;S.page=C.allowedPages(S.boot.actor.role)[0];S.lastSync=new Date().toISOString();localStorage.setItem('pulso-v3-last',JSON.stringify({user:session.user.id,environment:environment()}));
  if(S.boot.actor.role==='interviewer'){await openVault(session.user.id);return;}await refresh(true);await api.connect(()=>refresh());}
 async function refresh(force=false){if(S.refreshing||!S.boot||S.unlock)return;S.refreshing=true;
  try{if(!navigator.onLine){S.offline=true;return;}const b=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.boot=b;S.offline=false;S.lastSync=new Date().toISOString();
  if(b.actor.role==='interviewer'&&vault?.key){await vault.write('bootstrap',b);if(S.pack){const t=b.assignments.find(t=>t.id===S.pack.assignment.id),p=b.points.find(p=>p.id===S.pack.point.id);if(t)S.pack.assignment=t;if(p)S.pack.point=p;if(t?.status!=='active'||p?.state!=='open')S.choice=null;await vault.write('pack',S.pack);}S.queue=await vault.entries();}
  if(['admin','coordinator'].includes(b.actor.role)||b.actor.role==='viewer'&&b.operation.viewer_enabled)S.dashboard=await api.rpc('v3_dashboard');else S.dashboard=null;
+ if(S.page==='company'&&force)await loadReadiness();
  if(force||!S.modal&&!document.querySelector('form:not(#login-form)')&&!['capture','imports'].includes(S.page))render();
  else if(S.page==='capture'){const save=document.querySelector('#capture-form button[type=submit]');if(save)save.disabled=S.busy||S.pack?.assignment.status!=='active'||S.pack?.point.state!=='open'||b.operation.phase!=='running'||Date.now()>Date.parse(S.pack?.grant.capture_until);}
  }catch(e){if(/V3_ACCOUNT_DISABLED|V3_SESSION_REQUIRED/.test(e.message)){vault?.lock();S.pack=null;S.boot=null;S.queue=[];S.unlock=false;close();error(e);}else{S.offline=!navigator.onLine;if(force)error(e);}}
  finally{S.refreshing=false;}}
+async function loadReadiness(){
+ S.readiness=null;S.readinessError=null;
+ if(S.boot?.actor.role!=='admin')return;
+ try{S.readiness=await api.rpc('v3_company_readiness');}
+ catch(e){S.readinessError=/PGRST202|function.*does not exist/i.test(String(e.code||'')+' '+String(e.message||''))?'Módulo 013 pendiente de instalación. La empresa puede continuar preparando datos y usuarios.':'No se pudo leer el estado ('+C.feedback(e).code+'). Vuelva a intentar.';}
+}
 async function loadRecords(append=false){const last=append?S.records.at(-1):null;const rows=await api.rpc('v3_records',{p_before:last?.received_at||null,p_before_id:last?.id||null,p_limit:100});S.records=append?[...S.records,...rows]:rows;S.moreRecords=rows.length===100;}
 async function navigate(page){if(!C.allowedPages(S.boot?.actor.role).includes(page))throw new Error('V3_SCOPE_DENIED');if(S.page==='capture'&&S.choice&&!confirm('¿Salir sin guardar esta selección? Los pendientes ya guardados se conservan.'))return;S.page=page;S.error=null;S.choice=null;
+ if(page==='company')await loadReadiness();
  if(['records','review'].includes(page))await loadRecords();if(page==='queue')S.queue=await vault.entries();if(page==='capture')S.started=new Date().toISOString();if(page==='overview'||page==='results')await refresh();render();scrollTo(0,0);}
 async function sync(manual=false){if(S.syncing||!vault?.key||!S.boot||S.boot.actor.role!=='interviewer')return;if(!navigator.onLine){toast('Sin red. El archivo cifrado se conserva.');return;}S.syncing=true;
  try{const rows=await vault.entries(),attempted=rows.filter(x=>x.status!=='received'&&(manual||!x.blocked));for(const row of attempted){
@@ -49,7 +58,7 @@ async function sync(manual=false){if(S.syncing||!vault?.key||!S.boot||S.boot.act
  if(manual||attempted.length)if(manual||attempted.length)toast(S.queue.some(x=>x.status!=='received')?'Revise los pendientes sin confirmar.':'Todos los registros locales tienen recibo.');if(S.page==='queue')render();
  }finally{S.syncing=false;}}
 async function logout(){if(S.syncing)throw new Error('V3_WAIT_FOR_SYNC');if(vault?.key){const rows=await vault.entries(),n=rows.filter(x=>x.status!=='received').length;if(n&&!confirm(`Hay ${n} pendiente(s) cifrado(s). Se conservarán para esta misma persona; la siguiente no podrá enviarlos. ¿Bloquear archivo y salir?`))return;await vault.write('pack',S.pack);vault.lock();}
- if(navigator.onLine)await api.logout();else if(!S.simulation){const sb=await api.client();await sb.auth.signOut({scope:'local'}).catch(()=>{});}S.boot=null;S.session=null;S.pack=null;S.queue=[];S.unlock=false;S.error=null;close();render();}
+ if(navigator.onLine)await api.logout();else if(!S.simulation){const sb=await api.client();await sb.auth.signOut({scope:'local'}).catch(()=>{});}S.readiness=null;S.readinessError=null;S.boot=null;S.session=null;S.pack=null;S.queue=[];S.unlock=false;S.error=null;close();render();}
 function credentials(r){if(r.credentials_unavailable){modal('Acceso creado',`<p>La cuenta existe, pero no se vuelve a mostrar la contraseña original. Use Restablecer clave tras confirmar el estado.</p><pre>${E(r.code||'')}</pre>`);return;}const c=r.credential;modal('Credenciales privadas',`<p>Cuenta creada. Entregue solamente esta credencial a su titular.</p><div class="credential">${E(c.code)}<br>${E(c.password)}</div><button class="primary wide" data-action="download-credential">Guardar credencial privada</button><p class="inline-note">No guardar en GitHub ni en una carpeta pública.</p>`);S.credential=c;}
 function updatePaperCandidates(){const el=document.querySelector('#paper-task');if(!el)return;const t=currentTask(el.value),q=S.boot.questionnaires.find(q=>q.id===t?.questionnaire_id),list=document.querySelector('#paper-candidate-list');if(list)list.innerHTML=(q?.items||[]).map(c=>`<option value="${E(c.id)}">${E(c.name)} · ${E(c.list)}</option>`).join('');}
 function stationForm(id){const s=S.boot.stations.find(s=>s.id===id);commandForm(s?'Editar local':'Añadir local','station.save',(s?hid('id',s.id):V.select('Ciudad','district_id',permittedCity()))+V.field('Código interno único','code',s?.code||'','text','required maxlength="60"')+V.field('Nombre real del local','name',s?.name||'','text','required maxlength="160"')+V.field('Dirección','address',s?.address||'','text','required minlength="5" maxlength="250"')+V.field('Código oficial (opcional)','official_code',s?.official_code||'','text','maxlength="100"'),s?.revision);}
@@ -106,7 +115,18 @@ async function click(action,id,el){
  case 'import-apply':if(S.preview?.valid&&confirm('¿Aplicar exactamente este lote validado? No abre puntos ni publica formularios.')){await api.rpc('v3_import_apply',{p_batch:S.preview.batch_id,p_hash:S.preview.hash});S.preview=null;await refresh(true);}break;
  case 'operation-run':case 'operation-pause':case 'operation-close':commandForm('Control global','operation.state',hid('state',{'operation-run':'running','operation-pause':'paused','operation-close':'closed'}[action])+`<p>Esta operación afecta la disponibilidad global. Los puntos se abren por separado.</p>`+reason(),S.boot.operation.revision);break;
  case 'preflight':modal('Preflight de V3',`<pre>${E(JSON.stringify(await api.rpc('v3_preflight'),null,2))}</pre><p>Los pendientes en teléfonos y las pruebas físicas no se verifican por este RPC.</p>`);break;
- case 'activate':form('Activación técnica controlada','activate-form',`<p>No habilita encuestas automáticamente. Tras activar, el cliente V2 no podrá consultar ni escribir. No revierte datos.</p><label class="check"><input name="outbox" type="checkbox" required>Se han preservado y reconciliado las colas V2 de todos los titulares.</label>`+V.field('Referencia de respaldo y restauración comprobada','backup','','text','required minlength="10"')+V.field('Referencia de aceptación externa firmada','acceptance','','text','required minlength="10"'));break;
+ case 'activate':await navigate('company');break;
+ case 'readiness-refresh':await loadReadiness();render();break;
+ case 'company-activate':{
+  if(!isCompanyAdmin(S.boot))throw new Error('V3_COMPANY_ADMIN_ONLY');
+  if(!S.readiness?.can_edit||!S.readiness?.ready)throw new Error('V3_COMPANY_CONFIRMATIONS_PENDING');
+  const f=document.getElementById('company-readiness-form'),v=f?values(f):null,d=S.readiness;
+  if(v&&(v.outbox!==d.outbox_handled||v.backup!==d.backup_reference||v.acceptance!==d.acceptance_reference))throw new Error('V3_SAVE_READINESS_FIRST');
+  if(!confirm('¿Confirmar las declaraciones guardadas como Admin de la empresa y activar V3? Se cerrará el cliente V2. No abre encuestas.'))break;
+  const key=el.dataset.request||(el.dataset.request=C.uuid());
+  await api.rpc('v3_company_activate',{p_expected:d.revision,p_request_id:key});
+  await refresh(true);toast('V3 activado por la empresa. Los puntos no se abrieron automáticamente.');break;
+ }
  case 'password':form('Cambiar mi contraseña','password-form',V.field('Nueva contraseña','password','','password','required minlength="16" autocomplete="new-password"')+V.field('Repetir','repeat','','password','required minlength="16" autocomplete="new-password"'));break;
  case 'rescue-export':if(!vault?.key)throw new Error('V3_VAULT_LOCKED');C.download(JSON.stringify(await vault.exportEncrypted()),'PULSO_COPIA_CIFRADA_'+new Date().toISOString().slice(0,10)+'.json','application/json');break;
  case 'rescue-import':form('Recuperar copia de mi propia identidad','rescue-form',V.field('Copia cifrada','file','','file','required accept=".json"')+V.field('Frase usada en la copia','phrase','','password','required minlength="12"')+'<p>No cambia el origen ni las respuestas. La misma cuenta debe volver a autenticarse.</p>');break;
@@ -123,6 +143,11 @@ async function submit(formEl){let data=values(formEl);const request=formEl.datas
   if(S.boot.actor.user_id!==vault.user)throw new Error('V3_VAULT_WRONG_KEY');await vault.write('bootstrap',S.boot);S.pack=await vault.read('pack');S.queue=await vault.entries();S.page='task';render();if(navigator.onLine){await refresh();await api.connect(()=>refresh());await sync();}break;}
  case 'command-form':{if(data.point_id==='')data.point_id=null;if(data.enabled==='true'||data.enabled==='false')data.enabled=data.enabled==='true';if(formEl.dataset.command==='grant.save'){data.capabilities=data.viewer_cap?['view_results']:[...formEl.querySelectorAll('[name=cap]:checked')].map(x=>x.value);delete data.cap;delete data.viewer_cap;data.valid_until=new Date(data.valid_until).toISOString();}await api.command(formEl.dataset.command,data,expected(formEl),request);close();await refresh(true);toast('Operación confirmada.');break;}
  case 'assignment-form':await api.command('assignment.create',data,0,request);close();await refresh(true);break;
+ case 'company-readiness-form':{
+  if(!isCompanyAdmin(S.boot))throw new Error('V3_COMPANY_ADMIN_ONLY');
+  await api.rpc('v3_company_readiness_save',{p_outbox_handled:data.outbox,p_backup_reference:data.backup,p_acceptance_reference:data.acceptance,p_expected:expected(formEl),p_request_id:request});
+  await loadReadiness();render();toast('Avance guardado. No se ha activado V3 ni abierto encuestas.');break;
+ }
  case 'company-form':await api.rpc('v3_company_command',{p_action:'company.save',p_data:data,p_request_id:request,p_expected:expected(formEl)});await refresh(true);toast('Datos de empresa guardados.');break;
  case 'company-edit-form':await api.rpc('v3_company_command',{p_action:formEl.dataset.command,p_data:data,p_request_id:request,p_expected:expected(formEl)});close();await refresh(true);toast('Corrección guardada con auditoría.');break;
  case 'operation-form':data.lease_minutes=Number(data.lease_minutes);data.drain_hours=Number(data.drain_hours);await api.command('operation.save',data,expected(formEl),request);await refresh(true);break;
@@ -138,7 +163,7 @@ async function submit(formEl){let data=values(formEl);const request=formEl.datas
  case 'password-form':if(data.password!==data.repeat)throw new Error('V3_PASSWORD_MISMATCH');await api.changePassword(data.password);close();toast('Contraseña actualizada.');break;
  case 'rescue-form':{if(data.file.size>20*1024*1024)throw new Error('V3_IMPORT_LIMIT');const result=await vault.importEncrypted(JSON.parse(await data.file.text()),data.phrase);close();toast(result.imported+' registros recuperados; se comprobarán los recibos.');await sync();break;}
  case 'attachment-form':{const f=data.file;if(f.size>10485760||!['application/pdf','image/png','image/jpeg'].includes(f.type))throw new Error('V3_INVALID_ATTACHMENT');const first=new Uint8Array(await f.slice(0,8).arrayBuffer());if(f.type==='application/pdf'&&new TextDecoder().decode(first).slice(0,5)!=='%PDF-'||f.type==='image/png'&&(first[0]!==137||first[1]!==80)||f.type==='image/jpeg'&&(first[0]!==255||first[1]!==216))throw new Error('V3_INVALID_ATTACHMENT');const r=await api.command('attachment.reserve',{id:formEl.dataset.point,purpose:data.purpose,file_name:f.name,media_type:f.type,bytes:f.size},0,request);await api.attachmentUpload(r.path,f);await api.rpc('v3_attachment_confirm',{p_id:r.id});close();toast('Documento privado guardado.');break;}
- case 'activate-form':if(!confirm('¿Activar V3 después de la aceptación externa? Cierra las interfaces V2.'))break;await api.rpc('v3_activate',{p_legacy_outbox_handled:data.outbox,p_backup_reference:data.backup,p_acceptance_reference:data.acceptance});close();await refresh(true);break;
+ case 'activate-form':throw new Error('V3_USE_COMPANY_CONFIRMATIONS');
  default:throw new Error('V3_UNKNOWN_FORM');}}
 document.addEventListener('click',async event=>{const el=event.target.closest('[data-action]');if(!el)return;event.preventDefault();if(S.busy)return;S.error=null;setBusy(true);el.disabled=true;try{await click(el.dataset.action,el.dataset.id,el);}catch(e){error(e,el.closest('form'));}finally{setBusy(false);if(el.isConnected)el.disabled=false;}});
 document.addEventListener('submit',async event=>{event.preventDefault();const form=event.target;if(S.busy||!form.reportValidity())return;setBusy(true);const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{S.error=null;await submit(form);}catch(e){error(e,form);}finally{setBusy(false);buttons.filter(b=>b.isConnected).forEach(b=>b.disabled=false);}});

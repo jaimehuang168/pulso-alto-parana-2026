@@ -34,6 +34,12 @@ export function allowedPages(role){return {admin:['overview','company','points',
 export function hasCap(boot,cap,d,p=null){if(boot?.actor.role==='admin')return true;const now=Date.now();return (boot?.grants||[]).some(g=>g.user_id===boot.actor.user_id&&g.district_id===d&&(!g.point_id||g.point_id===p)&&g.capabilities.includes(cap)&&!g.revoked_at&&Date.parse(g.valid_from)<=now&&Date.parse(g.valid_until)>now);}
 const ERROR_TEXT={
  V3_SUPER_ADMIN_ONLY:['Solo Super Admin','La gestión de cuentas administrativas está reservada al propietario.'],
+ V3_COMPANY_ADMIN_ONLY:['Confirmación de la empresa','Estas declaraciones corresponden al Admin de la empresa, no al Super Admin.'],
+ V3_COMPANY_CONFIRMATIONS_PENDING:['Confirmaciones pendientes','Complete y guarde las tres confirmaciones reales de la empresa antes de activar.'],
+ V3_USE_COMPANY_CONFIRMATIONS:['Abra Empresa e inicio','La empresa gestiona las confirmaciones en Empresa e inicio.'],
+ V3_SAVE_READINESS_FIRST:['Guarde los cambios','Hay cambios sin guardar en las confirmaciones de la empresa.'],
+ V3_READINESS_ALREADY_ACTIVATED:['V3 ya está activado','No se sobrescriben las declaraciones de una activación registrada.'],
+ V3_INVALID_READINESS:['Revise el formulario','Los campos o la versión de las confirmaciones no son válidos.'],
  V3_COMPANY_UPGRADE_REQUIRED:['Falta actualización','El responsable técnico debe instalar el módulo de empresa antes de crear accesos.'],
  V3_CREATE_ADMIN_SEPARATELY:['Crear cuenta administrativa nueva','Use Crear acceso con el Super Admin. No convierta una identidad de campo en administrador.'],
  V3_COMPANY_INVALID:['Revise los datos','Compruebe el nombre, correo y límites de longitud. No se guardaron cambios.'],
