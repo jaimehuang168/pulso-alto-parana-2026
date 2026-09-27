@@ -1,0 +1,12 @@
+{
+  "repository": "jaimehuang168/pulso-alto-parana-2026",
+  "tag": "pulso-tutorials-3.1.3",
+  "archive": "Pulso_313_Tutoriales_ES.zip",
+  "archive_sha256": "27046edfe7c5e62afbd3b3fd131916795da8791bb6ac74eaa7815159c563d007",
+  "render_commit": "03a4ed5e427c0c701ff095af0171f6a78f95c2db",
+  "render_run": 36354927426,
+  "capture_run": 36353637989,
+  "player_checks_passed": 25,
+  "player_checks_failed": 0,
+  "scope": "Synthetic UI training, real video encoding and headless browser playback; not production login or physical-device certification."
+}
