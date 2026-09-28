@@ -1,0 +1,137 @@
+name: Personal phone login verification
+on:
+  push:
+    branches: [feat/simple-personal-login]
+    paths: ['v3/**','supabase/**','.github/workflows/simple-verify.yml']
+  workflow_dispatch:
+permissions: {contents: read}
+concurrency: {group: simple-phone-verification, cancel-in-progress: true}
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env: {LOCAL_STATUS_FILE: /tmp/pulso-v3-local-status.json, SUPABASE_TELEMETRY_DISABLED: '1'}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v7.0.0
+        with: {node-version: '22', package-manager-cache: false}
+      - name: Full pure, SQL and new authorization tests
+        run: |
+          npm --prefix v3 ci
+          mkdir -p v3/evidence
+          node --test tests/*.cjs > v3/evidence/legacy-unit.txt
+          python tests/import_package_test.py
+          node v3/scripts/check.mjs
+          node --test v3/tests/*.test.mjs > v3/evidence/unit.txt
+          node v3/tests/company.mjs
+          node v3/tests/direct-use.mjs
+          node v3/tests/live-board.mjs
+          node v3/tests/live-console-sql.mjs
+          node v3/tests/simple-sql.mjs
+      - name: Install disposable backend
+        run: |
+          mkdir -p /tmp/pulso-v3-cli
+          npm --prefix /tmp/pulso-v3-cli install --save-exact supabase@2.117.0
+          echo '/tmp/pulso-v3-cli/node_modules/.bin' >> "$GITHUB_PATH"
+      - name: Start localhost only, no project linking
+        run: |
+          mkdir -p /tmp/pulso-v3-local
+          supabase init --workdir /tmp/pulso-v3-local --yes
+          node v3/tests/prepare-local.mjs /tmp/pulso-v3-local
+          mkdir -p /tmp/pulso-v3-local/supabase/functions/interviewer-access
+          cp supabase/functions/interviewer-access/index.ts /tmp/pulso-v3-local/supabase/functions/interviewer-access/
+          python - <<'PY'
+          import pathlib,re,tomllib
+          p=pathlib.Path('/tmp/pulso-v3-local/supabase/config.toml');s=p.read_text()
+          for section,enabled in [('auth',False),('auth.email',True)]:
+            pattern=r'(?ms)(^\['+re.escape(section)+r'\]\s*\n)(.*?)(?=^\[|\Z)'
+            def replace(m):
+              body,n=re.subn(r'(?m)^enable_signup\s*=.*$', 'enable_signup = '+str(enabled).lower(),m[2]);assert n==1;return m[1]+body
+            s,n=re.subn(pattern,replace,s);assert n==1
+          s+='\n[functions.interviewer-access]\nverify_jwt = false\n'
+          cfg=tomllib.loads(s);assert cfg['auth']['enable_signup'] is False and cfg['auth']['email']['enable_signup'] is True;p.write_text(s)
+          PY
+          supabase start --workdir /tmp/pulso-v3-local --exclude studio,imgproxy,logflare,vector,supavisor,postgres-meta,mailpit > /tmp/simple-start.log 2>&1
+          supabase status --workdir /tmp/pulso-v3-local --output json > "$LOCAL_STATUS_FILE"
+          node - <<'JS'
+          const s=require(process.env.LOCAL_STATUS_FILE);for(const k of ['ANON_KEY','SERVICE_ROLE_KEY','JWT_SECRET','PUBLISHABLE_KEY','SECRET_KEY'])if(s[k])console.log('::add-mask::'+s[k]);
+          JS
+      - name: Serve both real local Edge functions
+        run: |
+          printf 'PULSO_V3_ORIGINS=http://127.0.0.1:8044\nAPP_ORIGIN=http://127.0.0.1:8044\n' > /tmp/pulso-v3-edge.env
+          supabase functions serve --workdir /tmp/pulso-v3-local --env-file /tmp/pulso-v3-edge.env > /tmp/simple-edge.log 2>&1 &
+          echo $! > /tmp/pulso-v3-edge.pid
+          for name in field-enrollment interviewer-access; do
+            for i in $(seq 1 60); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: http://127.0.0.1:8044' http://127.0.0.1:54321/functions/v1/$name || true)
+              if [ "$code" = 204 ]; then break; fi
+              if [ "$i" = 60 ]; then exit 1; fi
+              sleep 2
+            done
+          done
+      - name: Legacy real Auth and HTTP regression before optional 015
+        timeout-minutes: 12
+        run: |
+          node v3/tests/native.mjs
+          node v3/tests/load-native.mjs
+          node v3/tests/restore-native.mjs
+          node v3/tests/live-native.mjs
+          node v3/tests/company-native.mjs
+          node v3/tests/direct-native-check.mjs
+      - name: Build real local and synthetic clients
+        run: |
+          node v3/scripts/fetch-vendor.mjs
+          node v3/scripts/build.mjs --demo
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';import{spawnSync}from'node:child_process';const s=JSON.parse(fs.readFileSync(process.env.LOCAL_STATUS_FILE));const r=spawnSync(process.execPath,['v3/scripts/build.mjs'],{stdio:'inherit',env:{...process.env,SUPABASE_URL:s.API_URL,SUPABASE_PUBLISHABLE_KEY:s.ANON_KEY,PULSO_ENVIRONMENT:'personal-phone-native-ci'}});process.exit(r.status??1);
+          JS
+          mkdir -p web/v3 web/qa-src
+          cp -a v3/dist/. web/v3/
+          cp v3/web/modules/device-vault.mjs v3/web/modules/vault.mjs v3/web/modules/core.mjs v3/web/modules/asuncion-time.mjs web/qa-src/
+          node v3/live/build.mjs
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Existing user flow and result regression
+        timeout-minutes: 10
+        run: |
+          python v3/tests/company-browser.py
+          python v3/tests/live-native-browser.py
+          python v3/direct/browser.py
+          python v3/tests/workspace-browser.py
+      - name: Actual 015 chosen-password creation, scope, receipts and retries
+        timeout-minutes: 6
+        run: node v3/tests/simple-native.mjs
+      - name: Actual personal phone login, offline restart, sync and legacy preservation
+        timeout-minutes: 8
+        run: python v3/tests/simple-browser.py
+      - name: Strict evidence verdict, missing tests fail
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,pathlib,sys
+          p=pathlib.Path('v3/evidence');p.mkdir(exist_ok=True);checks=[]
+          specs=[('company.json',32),('direct-use-sql.json',18),('native.json',16),('load-native.json',5),('restore-native.json',3),('live-native.json',17),('company-native.json',16),('direct-native.json',6),('company-browser/results.json',22),('live-native-browser.json',66),('direct-native-browser.json',20),('workspace-browser/results.json',54),('simple-sql.json',20),('simple-native.json',21),('simple-browser.json',30)]
+          for name,n in specs:
+            f=p/name
+            if not f.exists():checks.append({'file':name,'pass':False,'reason':'Missing evidence'});continue
+            d=json.loads(f.read_text());checks.append({'file':name,'pass':d.get('failed')==0 and d.get('passed',0)>=n,'passed':d.get('passed',0),'failed':d.get('failed',0)})
+          d={'scope':'Unlinked disposable Supabase and actual Chromium/WebKit. Not hosted production or physical phone certification.','pass':all(c['pass'] for c in checks),'checks':checks};(p/'simple-verdict.json').write_text(json.dumps(d,indent=2));print(json.dumps(d,indent=2));sys.exit(0 if d['pass'] else 1)
+          PY
+      - name: Archive only source, build and sanitized evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/pulso-simple-delivery
+          git rev-parse HEAD > /tmp/pulso-simple-delivery/SOURCE_SHA.txt
+          git archive --format=zip HEAD -o /tmp/pulso-simple-delivery/source.zip
+          cp -r v3/evidence /tmp/pulso-simple-delivery/evidence
+          if [ -d v3/dist ]; then tar -C v3/dist -czf /tmp/pulso-simple-delivery/native-client.tar.gz .; fi
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with: {name: pulso-simple-delivery, path: /tmp/pulso-simple-delivery/, retention-days: 14}
+      - name: Remove disposable services and all private fixtures
+        if: always()
+        run: |
+          if [ -f /tmp/pulso-v3-edge.pid ]; then kill "$(cat /tmp/pulso-v3-edge.pid)" || true; fi
+          if command -v supabase >/dev/null; then supabase stop --workdir /tmp/pulso-v3-local --no-backup || true; fi
+          rm -f /tmp/pulso-simple-private.json /tmp/pulso-company-private.json /tmp/pulso-live-private.json /tmp/pulso-v3-browser-private.json /tmp/pulso-v3-local-context.json /tmp/pulso-v3-local-status.json /tmp/pulso-v3-edge.env
