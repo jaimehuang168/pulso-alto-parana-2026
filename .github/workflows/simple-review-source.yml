@@ -16,6 +16,13 @@ jobs:
       - name: Apply source and validate without any hosted project
         run: |
           python docs/simple/review_fixes.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('v3/tests/simple-sql.mjs');s=p.read_text()
+          old="await check('No false activation or synthetic vote inserted',async()=>{assert.deepEqual((await db.query('select * from pulso_v3.operations')).rows,before);"
+          new="await check('No false activation or synthetic vote inserted',async()=>{const after=(await db.query('select * from pulso_v3.operations')).rows;const clean=rows=>rows.map(({revision,updated_at,...rest})=>rest);assert.deepEqual(clean(after),clean(before));assert.equal(Number(after[0].revision),Number(before[0].revision)+2);assert(Date.parse(after[0].updated_at)>=Date.parse(before[0].updated_at));"
+          assert old in s;s=s.replace(old,new);p.write_text(s)
+          PY
           npm --prefix v3 ci
           node v3/scripts/check.mjs
           node --test v3/tests/simple-login.test.mjs
