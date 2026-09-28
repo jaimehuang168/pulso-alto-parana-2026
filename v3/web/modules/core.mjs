@@ -33,6 +33,9 @@ export function assertReceipt(e,r){if(!r||r.response_id!==e.id||!uuidOK(r.receip
 export function allowedPages(role){return {admin:['overview','registry','company','points','people','tasks','catalog','access','review','paper','imports','exports','settings','guide'],coordinator:['overview','points','people','tasks','paper','guide'],interviewer:['task','capture','queue','records','guide'],viewer:['results','guide']}[role]||[];}
 export function hasCap(boot,cap,d,p=null){if(boot?.actor.role==='admin')return true;const now=Date.now();return (boot?.grants||[]).some(g=>g.user_id===boot.actor.user_id&&g.district_id===d&&(!g.point_id||g.point_id===p)&&g.capabilities.includes(cap)&&!g.revoked_at&&Date.parse(g.valid_from)<=now&&Date.parse(g.valid_until)>now);}
 const ERROR_TEXT={
+ V3_INVALID_INTERVIEWER:['Revise los datos','Use código ENC-, nombre, ciudad y contraseña individual de 16 a 128 caracteres.'],
+ V3_DEVICE_STORAGE_UNAVAILABLE:['No se pudo preparar el teléfono','Conserve los datos existentes y avise al administrador. No borre el almacenamiento.'],
+ V3_SIMPLE_BASELINE_REQUIRED:['Actualización técnica pendiente','La administración de la plataforma debe actualizar el servidor.'],
  V3_SUPER_ADMIN_ONLY:['Acceso restringido','Esta cuenta no tiene permiso para gestionar administradores.'],
  V3_COMPANY_ADMIN_ONLY:['Confirmación de la empresa','Estas declaraciones corresponden al Admin de la empresa, no al administración de la plataforma.'],
  V3_COMPANY_CONFIRMATIONS_PENDING:['Confirmaciones pendientes','Complete y guarde las tres confirmaciones reales de la empresa antes de activar.'],

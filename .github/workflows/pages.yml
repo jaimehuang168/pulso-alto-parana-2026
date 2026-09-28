@@ -21,23 +21,25 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     env:
-      ACCEPTED: 74a46e6ba3698646f7f50ab254c2a60ef39353a2
+      ACCEPTED: 940859a1ec8d254b8eb62c29d3aee6443237b9b4
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
-      PULSO_ENVIRONMENT: workspace-3.1.3-visual-r2
+      PULSO_ENVIRONMENT: personal-phone-015
     steps:
       - uses: actions/checkout@v7.0.1
         with: {persist-credentials: false}
       - uses: actions/setup-node@v7.0.0
         with: {node-version: '22', package-manager-cache: false}
-      - name: Require exact native runtime and final illustrated-media acceptance
+      - name: Require exact native and matched media acceptance
         env: {GH_TOKEN: '${{ github.token }}'}
         run: |
-          gh api repos/${{ github.repository }}/actions/runs/36412078632 > /tmp/runtime.json
-          gh api repos/${{ github.repository }}/actions/runs/36418459043 > /tmp/media.json
+          gh api repos/${{ github.repository }}/actions/runs/36447775605 > /tmp/runtime.json
+          gh api repos/${{ github.repository }}/actions/runs/36418459043 > /tmp/legacy-media.json
+          gh api repos/${{ github.repository }}/actions/runs/36449611410 > /tmp/new-media.json
           python - <<'PY'
           import json,os
-          for path,sha in [('/tmp/runtime.json',os.environ['ACCEPTED']),('/tmp/media.json','fbb9f2a657ec9e59fca4f3f9d9486105960d5fc8')]:
+          specs=[('/tmp/runtime.json',os.environ['ACCEPTED']),('/tmp/legacy-media.json','fbb9f2a657ec9e59fca4f3f9d9486105960d5fc8'),('/tmp/new-media.json','3ef7c523299735f7dbf9f95361a8f508f0ff5933')]
+          for path,sha in specs:
             r=json.load(open(path));assert r['head_sha']==sha and r['status']=='completed' and r['conclusion']=='success'
           PY
           git fetch --no-tags --depth=1 origin "$ACCEPTED"
@@ -52,45 +54,51 @@ jobs:
           node v3/scripts/check.mjs
           node --test v3/tests/*.test.mjs
           python docs/build-company-manuals.py
-          python -m py_compile docs/training314/*.py
+          python -m py_compile docs/training314/*.py docs/simple/*.py
           node --check docs/tutorials/site/tutorials.js
-      - name: Build unchanged field data paths with signed-in-name presentation
+      - name: Build backward-compatible frontend; no hosted backend mutation
         run: |
           node v3/scripts/fetch-vendor.mjs
           node v3/scripts/build.mjs --demo
           node v3/scripts/build.mjs
-          rm -rf web/v3 web/v3-demo web/tutoriales
-          mkdir -p web/v3 web/v3-demo /tmp/pulso-illustrated-release
+          rm -rf web/v3 web/v3-demo web/tutoriales web/ingreso
+          mkdir -p web/v3 web/v3-demo /tmp/pulso-personal-release
           cp -a v3/dist/. web/v3/
           cp -a v3/preview/. web/v3-demo/
           node v3/live/build.mjs
           node scripts/prepare-pruebas.mjs
-      - name: Install approved durable release and illustrated manuals at existing links
+      - name: Install hash-locked old and new Spanish instructions
         env: {GH_TOKEN: '${{ github.token }}'}
-        run: python docs/training314/publish_install.py --destination web/tutoriales
-      - name: Verify publication boundaries and record exact hashes
+        run: |
+          python docs/training314/publish_install.py --destination web/tutoriales
+          python docs/simple/install_public.py --web web
+      - name: Verify publication boundaries and exact file hashes
         run: |
           python - <<'PY'
           import pathlib,json,subprocess,hashlib,re
           for folder in ['v3','v3-demo','pruebas/ensayo/v3']:
             p=pathlib.Path('web')/folder;assert not (p/'manual-es-zh.html').exists()
-            text=(p/'manual-es.html').read_text();assert text.count('<section id="s')==26 and text.count('<article class="step"')==147
-            assert not re.search('[\u3400-\u9fff]|Super Admin|jaimehuang168@gmail',text)
+            text=(p/'manual-es.html').read_text();assert text.count('<section id="s')==26 and text.count('<article class="step"')==147 and 'data-personal-notice' in text
+            new=(p/'manual-simple.html').read_text();assert new.count('<article class="step"')==22
+            assert not re.search('[\u3400-\u9fff]|Super Admin|jaimehuang168@gmail',text+new)
           assert not pathlib.Path('web/pruebas/guia-zh.html').exists()
           for name in ['web/pruebas/index.html','web/pruebas/ensayo/index.html']:
             assert not re.search('[\u3400-\u9fff]',pathlib.Path(name).read_text())
           commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          paths=['v3/app.js','v3/workspace.css','v3/manual-es.html','tutoriales/index.html','tutoriales/files.json']
+          paths=['v3/app.js','v3/workspace.css','v3/manual-es.html','v3/manual-simple.html','tutoriales/index.html','tutoriales/files.json','ingreso/index.html','ingreso/videos.html','ingreso/files.json']
           files={f:hashlib.sha256((pathlib.Path('web')/f).read_bytes()).hexdigest() for f in paths}
-          report={'version':'3.1.3','edition':'visual-r2','source_commit':commit,'accepted_runtime':'74a46e6ba3698646f7f50ab254c2a60ef39353a2','native_acceptance_run':36412078632,'media_acceptance_run':36418459043,'signed_in_identity_visible':True,'database_changed':False,'new_sql_required':False,'physical_device_certification':False,'private_manual_published':False,'public_language':'es','files':files}
-          pathlib.Path('web/company-release.json').write_text(json.dumps(report,indent=2));pathlib.Path('/tmp/pulso-illustrated-release/company-release.json').write_text(json.dumps(report,indent=2))
+          report={'version':'3.1.3','edition':'personal-phone-015','source_commit':commit,'accepted_runtime':'940859a1ec8d254b8eb62c29d3aee6443237b9b4','native_acceptance_run':36447775605,'media_acceptance_run':36449611410,'signed_in_identity_visible':True,'database_changed':False,'required_backend_module':15,'required_edge_function':'interviewer-access','backend_deployment_completed':False,'mode_enabled_only_by_server':True,'physical_device_certification':False,'private_manual_published':False,'public_language':'es','files':files}
+          pathlib.Path('web/company-release.json').write_text(json.dumps(report,indent=2));pathlib.Path('/tmp/pulso-personal-release/company-release.json').write_text(json.dumps(report,indent=2))
           PY
-          git archive --format=zip HEAD -o /tmp/pulso-illustrated-release/source.zip
-          tar -C web/v3 -czf /tmp/pulso-illustrated-release/app-frontend.tar.gz .
-          tar -C web/v3-demo -czf /tmp/pulso-illustrated-release/app-demo.tar.gz .
-          echo 'Session name/code, 147 illustrated steps and matched Spanish narration published. No SQL, production votes, cloud resources or private manual changes.' >> "$GITHUB_STEP_SUMMARY"
+          git archive --format=zip HEAD -o /tmp/pulso-personal-release/source.zip
+          tar -C web/v3 -czf /tmp/pulso-personal-release/app-frontend.tar.gz .
+          tar -C web/v3-demo -czf /tmp/pulso-personal-release/app-demo.tar.gz .
+          cp supabase/migrations/015_v3_simple_interviewers.sql /tmp/pulso-personal-release/
+          mkdir -p /tmp/pulso-personal-release/interviewer-access
+          cp supabase/functions/interviewer-access/index.ts /tmp/pulso-personal-release/interviewer-access/
+          echo 'Frontend and matched guides published. Hosted 015 and interviewer-access deployment NOT executed; only the owner may install them. No production votes, opening, activation, DNS or billing changes.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.0
-        with: {name: pulso-illustrated-app-release, path: /tmp/pulso-illustrated-release/, retention-days: 14}
+        with: {name: pulso-personal-app-release, path: /tmp/pulso-personal-release/, retention-days: 14}
       - uses: actions/configure-pages@v6.0.0
       - uses: actions/upload-pages-artifact@v5.0.0
         with: {path: web}
@@ -114,8 +122,8 @@ jobs:
         run: |
           python -m pip install playwright==1.57.0
           python -m playwright install --with-deps chromium
-      - name: Verify public identity, all media hashes, images and actual video playback
-        run: python docs/training314/verify_published.py
+      - name: Verify public routes, identity, guide images and actual new video playback
+        run: python docs/simple/verify_public.py
       - uses: actions/upload-artifact@v7.0.0
         if: always()
-        with: {name: pulso-identity-illustrated-published, path: evidence/, retention-days: 14}
+        with: {name: pulso-personal-published, path: evidence/, retention-days: 14}

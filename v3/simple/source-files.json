@@ -1,0 +1,17 @@
+{
+  "supabase/migrations/015_v3_simple_interviewers.sql": "13c9af22afe90c9215ea8cdb2abec8f6d684a36485267fc7cc6ec7188630ac3c",
+  "supabase/functions/interviewer-access/index.ts": "b3edba216163a2e05c8f8e11be4912981b04f8d0d53d9ace74fa1d9094bcc1ab",
+  "v3/web/modules/device-vault.mjs": "adbaca77cfa0c0389d683d25d651f2a6c8dbdf17b0e42f8d784df6a7c9411e8d",
+  "v3/web/modules/simple-login.mjs": "e9bee496bea82a42c7d795e8b33d00106de8570736c74c2edc2ba4cde5ae46a5",
+  "v3/tests/simple-login.test.mjs": "f1d11a01464e31491436d829e0e020e5b204ec171c5a4fe4a04db8af4f9908f9",
+  "v3/tests/simple-sql.mjs": "9f8eb052c41eec1ccfe6d7c9c7165b62c8b521f7cffd9374754f660b64576e51",
+  "v3/tests/simple-native.mjs": "9ec6f3550ce0b36b66bd64cbe891cab77e331c2cb71950b569907cc54332755a",
+  "v3/tests/simple-browser.py": "0dde9f688830dd91c32e798e310d6e59050b69f2b1a5cd2692fe23516629a7d1",
+  "v3/simple/patch.py": "913a179f1b784a94d3d5106a0af4a5e090b734a1c680e97b3f21b45e9f8d25eb",
+  "supabase/config.toml": "01b9fa3fceaf9df8dfeb2bd4d6e0cc46f97090bf621c93f1a77a54ed379c4687",
+  "v3/web/app.mjs": "3e1fc0538a0545a90bdfe9cd89b3fe53c54199d46ffd6d72d947fb9d83e7e29a",
+  "v3/web/modules/api.mjs": "a4b3bf42a027f69dda5462d3372b0b52f225368bfed4cc73fb30d73886352a1f",
+  "v3/web/modules/core.mjs": "bb73a2c2107ae61a3aab982df9f863aeeaa2924d23044f5475c763520ae55eff",
+  "v3/web/modules/views.mjs": "02b698817a867a39c85e5cbb02c4b37c8be8ce4a9c6658a23a58bbcb42804ba0",
+  "v3/web/modules/workspace-base.mjs": "293dd2ae3f134ea5294a87f0fc9536625bbb00420ae46a55c0283f2fea014648"
+}
