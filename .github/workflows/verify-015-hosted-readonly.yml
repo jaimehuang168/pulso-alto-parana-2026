@@ -1,0 +1,30 @@
+name: Verify hosted 015 without writes
+on:
+  push:
+    branches: [qa/015-hosted-readonly-20260928]
+    paths: [qa/hosted-015-readonly.py, .github/workflows/verify-015-hosted-readonly.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-015-hosted-readonly
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile and perform bounded live read-only checks
+        run: |
+          python -m py_compile qa/hosted-015-readonly.py
+          python qa/hosted-015-readonly.py
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-015-hosted-readonly
+          path: evidence/hosted-readonly-check.json
+          if-no-files-found: error
+          retention-days: 14
