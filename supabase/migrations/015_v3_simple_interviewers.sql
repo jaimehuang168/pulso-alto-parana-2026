@@ -14,7 +14,7 @@ ALTER TABLE pulso_v3.assignments ADD COLUMN IF NOT EXISTS acknowledgement_mode t
 DO $$ DECLARE c record; BEGIN
  -- Replace only the original training-dependent approval constraint, preserving every other check.
  FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='pulso_v3.people'::regclass
-  AND contype='c' AND pg_get_constraintdef(oid) LIKE '%training_passed_at%'
+  AND contype='c' AND conname='people_check' AND pg_get_constraintdef(oid) LIKE '%training_passed_at%' AND pg_get_constraintdef(oid) LIKE '%training_practice_ack%'
   AND conname<>'people_approval_basis' LOOP
    EXECUTE format('ALTER TABLE pulso_v3.people DROP CONSTRAINT %I',c.conname);
  END LOOP;
@@ -224,6 +224,21 @@ BEGIN RETURN pulso_v3.bootstrap_before_simple(p_client)||jsonb_build_object('sim
 REVOKE ALL ON FUNCTION pulso_v3.bootstrap_before_simple(integer) FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.v3_bootstrap(integer) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.v3_bootstrap(integer) TO authenticated;
+
+-- Restore managed workers through the existing revision-checked, audited admin command.
+-- Retain every other operation and the external-report wrapper unchanged.
+DO $managed_restore$
+DECLARE definition text; old_check text:='IF per.training_passed_at IS NULL OR NOT per.training_practice_ack OR length(reason)<5 THEN';
+ new_check text:='IF (per.onboarding_mode<>''admin_managed'' AND (per.training_passed_at IS NULL OR NOT per.training_practice_ack)) OR length(reason)<5 OR (per.onboarding_mode=''admin_managed'' AND a.role<>''admin'') THEN';
+BEGIN
+ SELECT pg_get_functiondef('pulso_v3.command_before_reports(text,jsonb,uuid,bigint,integer)'::regprocedure) INTO definition;
+ IF strpos(definition,old_check)>0 THEN
+  IF length(definition)-length(replace(definition,old_check,''))<>length(old_check) THEN RAISE EXCEPTION 'V3_SIMPLE_COMMAND_LAYOUT';END IF;
+  EXECUTE replace(definition,old_check,new_check);
+ ELSIF strpos(definition,new_check)=0 THEN RAISE EXCEPTION 'V3_SIMPLE_COMMAND_LAYOUT';END IF;
+END $managed_restore$;
+REVOKE ALL ON FUNCTION public.v3_start_task(uuid,uuid,integer) FROM PUBLIC,anon;
+
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA pulso_v3 FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pulso_v3 TO service_role;
 INSERT INTO pulso_v3.schema_versions(version) VALUES(15) ON CONFLICT(version) DO NOTHING;

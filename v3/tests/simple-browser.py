@@ -1,10 +1,19 @@
 """Own-phone creation/login/storage/offline tests against real disposable Supabase."""
 from pathlib import Path
-import json,threading,http.server,functools,uuid,urllib.request,time
+import json,threading,http.server,functools,uuid,urllib.request,time,socket
 from playwright.sync_api import sync_playwright
 R=Path(__file__).resolve().parents[2];F=json.loads(Path('/tmp/pulso-simple-private.json').read_text());OUT=R/'v3/evidence/simple-browser';OUT.mkdir(parents=True,exist_ok=True);checks=[]
 assert F['url'].startswith('http://127.0.0.1:')
+NETWORK_CUT=threading.Event()
+blocked_static=[]
 class Quiet(http.server.SimpleHTTPRequestHandler):
+ def do_GET(self):
+  if NETWORK_CUT.is_set():
+   blocked_static.append(self.path)
+   try:self.connection.shutdown(socket.SHUT_RDWR)
+   except OSError:pass
+   self.connection.close();return
+  super().do_GET()
  def log_message(self,*a):pass
 srv=http.server.ThreadingHTTPServer(('127.0.0.1',8044),functools.partial(Quiet,directory=str(R/'web')));threading.Thread(target=srv.serve_forever,daemon=True).start()
 BASE='http://127.0.0.1:8044'
@@ -15,6 +24,18 @@ def login(p,c):
  p.goto(BASE+'/v3/');f=p.locator('#login-form');f.wait_for(timeout=30000);f.locator('[name=code]').fill(c['code']);f.locator('[name=password]').fill(c['password']);f.locator('button[type=submit]').click()
 def go(p,name):idle(p);p.locator('[data-action=nav][data-id='+name+']:visible').first.click();idle(p)
 def snap(p,n):p.screenshot(path=str(OUT/n),full_page=True)
+def offline(ctx,p,enabled,engine):
+ if engine=='chromium':ctx.set_offline(enabled);return
+ # Playwright issue 42775: WebKit setOffline rejects even literal SW responses.
+ # Disconnect the real static server and all API traffic; emulate only the indicator.
+ # No cached HTML or responses are supplied by this test.
+ if enabled:
+  NETWORK_CUT.set();ctx.route(F['url']+'/**',lambda r:r.abort())
+  ctx.add_init_script("Object.defineProperty(Navigator.prototype,'onLine',{configurable:true,get(){return localStorage.getItem('__qa_network_cut')!=='yes'}})")
+  p.evaluate("localStorage.setItem('__qa_network_cut','yes');Object.defineProperty(Navigator.prototype,'onLine',{configurable:true,get(){return localStorage.getItem('__qa_network_cut')!=='yes'}});dispatchEvent(new Event('offline'))")
+ else:
+  NETWORK_CUT.clear();ctx.unroute(F['url']+'/**');p.evaluate("localStorage.removeItem('__qa_network_cut');dispatchEvent(new Event('online'))")
+
 try:
  with sync_playwright() as w:
   for engine in ['chromium','webkit']:
@@ -39,10 +60,12 @@ try:
    # A normal reload requires no second passphrase and installs the static shell.
    p.evaluate('navigator.serviceWorker.ready.then(()=>true)');p.reload();p.locator('#capture-form').wait_for(timeout=30000);idle(p)
    check(engine+' reloading reopens same personal archive automatically',p.locator('#vault-form').count()==0)
-   mobile.set_offline(True);p.locator('[name=voted]').check();p.locator('[name=consent]').check();p.locator('.choice[data-outcome=candidate]').nth(1).click();p.locator('#capture-form button[type=submit]').click();idle(p);go(p,'queue')
+   offline(mobile,p,True,engine);p.locator('[name=voted]').check();p.locator('[name=consent]').check();p.locator('.choice[data-outcome=candidate]').nth(1).click();p.locator('#capture-form button[type=submit]').click();idle(p);go(p,'queue')
    check(engine+' offline survey stays in encrypted queue',p.locator('body').inner_text().count('Sin confirmar')>=1);snap(p,engine+'-offline.png')
+   check(engine+' installed static shell controls the page',p.evaluate('!!navigator.serviceWorker.controller'))
    p.reload();p.locator('#capture-form').wait_for(timeout=30000);idle(p);go(p,'queue');check(engine+' offline page reload retains own pending records',p.locator('#vault-form').count()==0 and 'Sin confirmar' in p.locator('body').inner_text())
-   mobile.set_offline(False);p.get_by_text('Aceptada',exact=True).nth(1).wait_for(timeout=45000)
+   if engine=='webkit':check('WebKit restored cached shell while real static network requests were disconnected',len(blocked_static)>0 and not p.evaluate('navigator.onLine'))
+   offline(mobile,p,False,engine);p.get_by_text('Aceptada',exact=True).nth(1).wait_for(timeout=45000)
    check(engine+' reconnection automatically syncs the original pending record',p.get_by_text('Aceptada',exact=True).count()==2)
    p.locator('[data-action=sync]:visible').click();idle(p);check(engine+' repeated sync does not duplicate accepted records',p.get_by_text('Aceptada',exact=True).count()==2);snap(p,engine+'-synced.png')
    p.locator('[data-action=logout]:visible').first.click();p.locator('#login-form').wait_for(timeout=20000)
@@ -72,5 +95,5 @@ except Exception as e:
  for c in [F['admin'],F['root'],F['viewer']]:text=text.replace(c['password'],'[redacted]')
  checks.append({'name':'Browser execution','pass':False,'error':text[:800]})
 finally:
- srv.shutdown();d={'scope':'Real Chromium/WebKit, local Auth and Edge, synthetic responses. Not physical devices or production.','passed':sum(c['pass'] for c in checks),'failed':sum(not c['pass'] for c in checks),'checks':checks};(R/'v3/evidence/simple-browser.json').write_text(json.dumps(d,indent=2));print(json.dumps(d,indent=2))
+ NETWORK_CUT.clear();srv.shutdown();d={'scope':'Real Chromium/WebKit and local Auth/Edge. Chromium native offline emulation; WebKit static-server disconnect + API abort + explicit offline indicator, due to Playwright issue 42775. Not physical devices or production.','passed':sum(c['pass'] for c in checks),'failed':sum(not c['pass'] for c in checks),'checks':checks};(R/'v3/evidence/simple-browser.json').write_text(json.dumps(d,indent=2));print(json.dumps(d,indent=2))
  if d['failed']:raise SystemExit(1)

@@ -36,6 +36,14 @@ try{
  await check('Admin cannot impersonate fieldwork with ready endpoint',()=>assert.rejects(rpc('v3_prepare_interviewer',[uuid()]),/WORKER_ONLY/));
  await check('Foreign point ID rejected before creating any profile',()=>assert.rejects(service('prepare',{...args(),point_id:uuid()}),/POINT_DISTRICT_MISMATCH/));
  await check('Suspended account cannot obtain new authorization',async()=>{await db.query("update pulso_v3.people set approval='suspended' where id=$1",[person]);assert.equal((await rpc('v3_prepare_interviewer',[uuid()],w,ws)).status,'waiting_admin')});
- await check('No false activation or synthetic vote inserted',async()=>{assert.deepEqual((await db.query('select * from pulso_v3.operations')).rows,before);assert.equal((await db.query('select count(*)::int n from pulso_v3.responses')).rows[0].n,0)});
+ await check('Managed worker can be restored and approved by admin without inventing practice',async()=>{
+  let rev=(await db.query('select revision from pulso_v3.people where id=$1',[person])).rows[0].revision;
+  await rpc('v3_command',['person.restore',{id:person,reason:'Restauración revisada por administración de ensayo'},uuid(),rev]);
+  rev=(await db.query('select revision from pulso_v3.people where id=$1',[person])).rows[0].revision;
+  await rpc('v3_command',['person.approve',{id:person,reason:'Rehabilitación de la misma persona por administración'},uuid(),rev]);
+  const row=(await db.query('select approval,training_passed_at,training_practice_ack from pulso_v3.people where id=$1',[person])).rows[0];
+  assert.equal(row.approval,'approved');assert.equal(row.training_passed_at,null);assert.equal(row.training_practice_ack,false);
+ });
+ await check('No false activation or synthetic vote inserted',async()=>{const after=(await db.query('select * from pulso_v3.operations')).rows;const clean=rows=>rows.map(({revision,updated_at,...rest})=>rest);assert.deepEqual(clean(after),clean(before));assert.equal(Number(after[0].revision),Number(before[0].revision)+2);assert(Date.parse(after[0].updated_at)>=Date.parse(before[0].updated_at));assert.equal((await db.query('select count(*)::int n from pulso_v3.responses')).rows[0].n,0)});
 }catch(e){console.error(e);if(!checks.some(x=>!x.pass))checks.push({name:'SQL fixture setup',pass:false,error:e.message});process.exitCode=1}
 finally{await fs.mkdir(new URL('../evidence',import.meta.url),{recursive:true});await fs.writeFile(new URL('../evidence/simple-sql.json',import.meta.url),JSON.stringify({scope:'Isolated PGlite, synthetic accounts, no production',passed:checks.filter(x=>x.pass).length,failed:checks.filter(x=>!x.pass).length,checks},null,2));await db.close();}
