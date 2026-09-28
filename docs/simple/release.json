@@ -1,0 +1,13 @@
+{
+  "edition": "personal-phone-015",
+  "tag": "pulso-ingreso-personal-015",
+  "asset": "Pulso_Ingreso_Personal_ES.zip",
+  "sha256": "da2efa85c11a147d1295cc99ecba3f86f0e53902284b3f69220f8ce11ff385a5",
+  "accepted_runtime": "940859a1ec8d254b8eb62c29d3aee6443237b9b4",
+  "runtime_run": 36447775605,
+  "media_commit": "3ef7c523299735f7dbf9f95361a8f508f0ff5933",
+  "media_run": 36449611410,
+  "illustrated_steps": 22,
+  "database_deployment_completed": false,
+  "edge_deployment_completed": false
+}
