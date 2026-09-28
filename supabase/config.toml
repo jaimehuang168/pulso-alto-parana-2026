@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.field-enrollment]
 verify_jwt = false
+
+[functions.interviewer-access]
+verify_jwt = false

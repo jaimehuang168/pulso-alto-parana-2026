@@ -1,4 +1,6 @@
 import * as W from './modules/workspace.mjs';
+import * as Simple from './modules/simple-login.mjs';
+import {DeviceVault} from './modules/device-vault.mjs';
 import * as C from './modules/core.mjs';
 import * as V from './modules/views.mjs';
 import {CloudAPI} from './modules/api.mjs';
@@ -7,37 +9,70 @@ import {parseFile} from './modules/importer.mjs';
 import QRCode from 'qrcode';
 const config=window.PULSO_V3_CONFIG||{},E=C.esc;
 let api=new CloudAPI(config), vault=null;
-const S={boot:null,page:'overview',error:null,lastSync:null,offline:!navigator.onLine,queue:[],pack:null,choice:null,geo:{status:'not_requested'},started:null,busy:false,refreshing:false,syncing:false,modal:false,unlock:false,vaultExists:false,loginCode:'',session:null,join:null,preview:null,records:[],moreRecords:false,ui:W.freshUI(),registry:null,aliases:{},refreshError:false,simulation:config.simulation===true,demoAccounts:[],readiness:null,readinessError:null};
+const S={boot:null,page:'overview',error:null,lastSync:null,offline:!navigator.onLine,queue:[],pack:null,choice:null,geo:{status:'not_requested'},started:null,busy:false,refreshing:false,syncing:false,modal:false,unlock:false,vaultExists:false,loginCode:'',session:null,join:null,preview:null,records:[],moreRecords:false,ui:W.freshUI(),registry:null,aliases:{},refreshError:false,simulation:config.simulation===true,demoAccounts:[],readiness:null,readinessError:null,simple:false,simpleState:null,preparing:false};
 const environment=()=>config.supabaseUrl||'isolated-simulation-v3';
 const device=()=>{let id=localStorage.getItem('pulso-v3-device');if(!C.uuidOK(id)){id=C.uuid();localStorage.setItem('pulso-v3-device',id);}return id;};
 function setBusy(value){S.busy=value;document.getElementById('app').setAttribute('aria-busy',String(value));}
-function render(){document.getElementById('app').setAttribute('aria-busy',String(S.busy));document.getElementById('app').innerHTML=S.unlock?V.unlock(S):S.boot?V.shell(S,V.pageView(S)):V.login(S);if(S.page==='paper')updatePaperCandidates();}
+function render(){document.getElementById('app').setAttribute('aria-busy',String(S.busy));document.getElementById('app').innerHTML=S.unlock?(S.simple?Simple.legacyUnlock(S,V):V.unlock(S)):S.boot?V.shell(S,V.pageView(S)):V.login(S);if(S.page==='paper')updatePaperCandidates();}
 function toast(text){const n=document.getElementById('notice');n.textContent=text;clearTimeout(S.toastTimer);S.toastTimer=setTimeout(()=>n.textContent='',6500);}
 function error(e,form=null){S.error=C.feedback(e);const safeRef=e?.reference&&C.uuidOK(e.reference)?e.reference:'';if(safeRef)S.error.code+=' / '+safeRef;
  if(form&&document.body.contains(form)){let box=form.querySelector('.form-error');if(!box){box=document.createElement('div');box.className='form-error';form.prepend(box);}box.innerHTML=V.notice(S.error);box.querySelector('[role=alert]')?.focus();box.scrollIntoView({block:'nearest'});}
  else{render();document.querySelector('#feedback')?.focus({preventScroll:false});}
 }
 function modal(title,body){S.modal=true;document.getElementById('modal-root').innerHTML=`<div class="modalback"><section class="modal" role="dialog" aria-modal="true" aria-label="${E(title)}"><header class="modalhead"><h2>${E(title)}</h2>${V.button('×','close-modal','','small')}</header>${body}</section></div>`;requestAnimationFrame(()=>document.querySelector('.modal input,.modal select,.modal button')?.focus());}
-function close(){S.modal=false;document.getElementById('modal-root').replaceChildren();}
+function close(){S.credential=null;S.backup=null;S.modal=false;document.getElementById('modal-root').replaceChildren();}
 function form(title,id,body,extra=''){modal(title,`<form id="${id}" ${extra}>${body}<div class="actions"><button type="submit" class="primary wide">Confirmar</button></div><p class="inline-note">Espere la confirmación. En caso de error no cambie de código para repetir la operación.</p></form>`);}
-function values(form){const d={};for(const [k,v]of new FormData(form)){d[k]=typeof v==='string'?(form.elements.namedItem(k)?.type==='password'?v:v.trim()):v;}for(const input of form.querySelectorAll('[data-type=number]'))d[input.name]=Number(input.value);for(const input of form.querySelectorAll('[data-type=nullable-number]'))d[input.name]=input.value===''?null:Number(input.value);for(const input of form.querySelectorAll('input[type=checkbox]:not([data-array])'))d[input.name]=input.checked;return d;}
+function values(form){const d={};for(const [k,v]of new FormData(form)){d[k]=typeof v==='string'?((['password','phrase','repeat'].includes(k)||form.elements.namedItem(k)?.type==='password')?v:v.trim()):v;}for(const input of form.querySelectorAll('[data-type=number]'))d[input.name]=Number(input.value);for(const input of form.querySelectorAll('[data-type=nullable-number]'))d[input.name]=input.value===''?null:Number(input.value);for(const input of form.querySelectorAll('input[type=checkbox]:not([data-array])'))d[input.name]=input.checked;return d;}
 const expected=el=>Number(el.dataset.revision||0);
 const commandForm=(title,action,body,rev=0)=>form(title,'command-form',body,`data-command="${action}" data-revision="${rev}"`);
 const hid=(k,v)=>`<input type="hidden" name="${k}" value="${E(v)}">`;
 const reason=(defaultText='')=>V.textarea('Motivo / referencia','reason',defaultText,'required minlength="10" maxlength="500"');
 const currentPerson=id=>S.boot.people.find(p=>p.id===id),currentPoint=id=>S.boot.points.find(p=>p.id===id),currentTask=id=>S.boot.assignments.find(p=>p.id===id),currentActor=id=>S.boot.actors.find(p=>p.user_id===id);
 const permittedCity=()=>V.cities(S.boot).filter(d=>S.boot.actor.role==='admin'||(S.boot.grants||[]).some(g=>g.district_id===d.id&&!g.revoked_at));
-async function openVault(user){vault=new Vault(environment(),user);await vault.open();S.vaultExists=await vault.exists();S.unlock=true;S.error=null;render();}
-async function enter(session){S.ui=W.freshUI();S.registry=null;S.aliases={};S.readiness=null;S.readinessError=null;S.session=session;S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.loginCode=S.boot.actor.code;S.error=null;S.page=C.allowedPages(S.boot.actor.role)[0];S.lastSync=new Date().toISOString();localStorage.setItem('pulso-v3-last',JSON.stringify({user:session.user.id,environment:environment()}));
+const personalHint=()=>{try{return JSON.parse(localStorage.getItem('pulso-personal-current')||'null');}catch{return null;}};
+async function finishPhone(){
+ if(!S.boot){S.boot=await vault.read('bootstrap');if(!S.boot||S.boot.actor.user_id!==vault.user||S.boot.actor.role!=='interviewer')throw Error('V3_NO_LOCAL_TASK');}
+ if(S.boot.actor.user_id!==vault.user)throw Error('V3_VAULT_WRONG_KEY');
+ S.unlock=false;S.error=null;S.pack=await vault.read('pack');S.queue=await vault.entries();S.started=new Date().toISOString();S.page='capture';
+ await vault.write('bootstrap',S.boot);
+ localStorage.setItem('pulso-personal-current',JSON.stringify({user:vault.user,environment:environment()}));
+ if(navigator.onLine){await preparePhone(true);await api.connect(()=>refresh());await sync();}
+ else{S.offline=true;S.simpleState=S.pack?'ready':'offline';}
+ render();
+}
+async function preparePhone(force=false){
+ if(!S.simple||!S.boot||!vault?.key||S.preparing||!navigator.onLine)return;
+ if(!force&&(S.busy||S.syncing||S.choice||document.querySelector('#capture-form [name=voted]:checked')||S.modal))return;
+ S.preparing=true;const before=S.pack?.assignment.id,wasReady=S.simpleState==='ready';
+ try{
+  const next=await api.rpc('v3_prepare_interviewer',{p_device:device(),p_client:C.CLIENT});S.simpleState=next.status;
+  if(next.status==='ready'){
+   S.pack=next.pack;await vault.write('pack',S.pack);
+   // Get authoritative scope/state after automatic preparation; this never changes a response.
+   S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});await vault.write('bootstrap',S.boot);
+   if(before!==S.pack.assignment.id){S.choice=null;S.started=new Date().toISOString();}
+  }else{S.pack=null;await vault.write('pack',null);}
+  if(!force&&S.page==='capture'&&!S.choice&&(before!==S.pack?.assignment.id||wasReady!==(next.status==='ready')))render();
+ }finally{S.preparing=false;}
+}
+async function openVault(user){
+ vault=S.simple?new DeviceVault(environment(),user):new Vault(environment(),user);await vault.open();S.vaultExists=await vault.exists();
+ if(S.simple){
+  if(!S.boot){const h=personalHint();if(!h||h.user!==user||h.environment!==environment())throw Error('V3_SESSION_REQUIRED');}
+  if(await vault.automaticUnlock(!!S.boot)){await finishPhone();return;}
+ }
+ S.unlock=true;S.error=null;render();
+}
+async function enter(session){S.ui=W.freshUI();S.registry=null;S.aliases={};S.readiness=null;S.readinessError=null;S.session=session;S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.loginCode=S.boot.actor.code;S.simple=Simple.hasSimple(S.boot);S.simpleState=null;S.error=null;S.page=C.allowedPages(S.boot.actor.role)[0];S.lastSync=new Date().toISOString();localStorage.setItem('pulso-v3-last',JSON.stringify({user:session.user.id,environment:environment()}));
  if(S.boot.actor.role==='interviewer'){await openVault(session.user.id);return;}await refresh(true);await api.connect(()=>refresh());}
 async function refresh(force=false){if(S.refreshing||!S.boot||S.unlock)return;S.refreshing=true;
- try{if(!navigator.onLine){S.offline=true;return;}const b=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.boot=b;S.ui=W.normalizeFilters(b,S.ui);S.offline=false;S.refreshError=false;
- if(b.actor.role==='interviewer'&&vault?.key){await vault.write('bootstrap',b);if(S.pack){const t=b.assignments.find(t=>t.id===S.pack.assignment.id),p=b.points.find(p=>p.id===S.pack.point.id);if(t)S.pack.assignment=t;if(p)S.pack.point=p;if(t?.status!=='active'||p?.state!=='open')S.choice=null;await vault.write('pack',S.pack);}S.queue=await vault.entries();}
+ try{if(!navigator.onLine){S.offline=true;return;}let b=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});S.boot=b;S.ui=W.normalizeFilters(b,S.ui);S.offline=false;S.refreshError=false;
+ if(b.actor.role==='interviewer'&&vault?.key){if(S.simple){await preparePhone();b=S.boot;}await vault.write('bootstrap',b);if(S.pack){const t=b.assignments.find(t=>t.id===S.pack.assignment.id),p=b.points.find(p=>p.id===S.pack.point.id);if(t)S.pack.assignment=t;if(p)S.pack.point=p;if(t?.status!=='active'||p?.state!=='open')S.choice=null;await vault.write('pack',S.pack);}S.queue=await vault.entries();}
  if(['admin','coordinator'].includes(b.actor.role)||b.actor.role==='viewer'&&b.operation.viewer_enabled){if(!S.ui.paused||force){S.dashboard=await api.rpc('v3_dashboard');S.lastSync=S.dashboard?.server_time||new Date().toISOString();}}else{S.dashboard=null;S.lastSync=new Date().toISOString();}
  
  if(force||!S.modal&&!document.querySelector('form:not(#login-form)')&&!document.activeElement?.matches('input,textarea,select')&&!['capture','imports'].includes(S.page)&&!(S.page==='overview'&&S.ui.paused))render();
  else if(S.page==='capture'){const save=document.querySelector('#capture-form button[type=submit]');if(save)save.disabled=S.busy||S.pack?.assignment.status!=='active'||S.pack?.point.state!=='open'||b.operation.phase!=='running'||Date.now()>Date.parse(S.pack?.grant.capture_until);}
- }catch(e){if(/V3_ACCOUNT_DISABLED|V3_SESSION_REQUIRED/.test(e.message)){vault?.lock();S.pack=null;S.boot=null;S.queue=[];S.registry=null;S.aliases={};S.unlock=false;close();error(e);}else{S.offline=!navigator.onLine;S.refreshError=true;if(force)error(e);else{const b=document.querySelector('.topbar .badge');if(b){b.classList.add('warn');b.textContent='Actualización sin confirmar';}}}}
+ }catch(e){if(/V3_ACCOUNT_DISABLED|V3_SESSION_REQUIRED/.test(e.message)){localStorage.removeItem('pulso-personal-current');vault?.lock();S.pack=null;S.boot=null;S.queue=[];S.registry=null;S.aliases={};S.unlock=false;close();error(e);}else{S.offline=!navigator.onLine;S.refreshError=true;if(force)error(e);else{const b=document.querySelector('.topbar .badge');if(b){b.classList.add('warn');b.textContent='Actualización sin confirmar';}}}}
  finally{S.refreshing=false;}}
 async function loadReadiness(){
  S.readiness=null;S.readinessError=null;
@@ -58,7 +93,7 @@ async function sync(manual=false){if(S.syncing||!vault?.key||!S.boot||S.boot.act
  if(manual||attempted.length)if(manual||attempted.length)toast(S.queue.some(x=>x.status!=='received')?'Revise los pendientes sin confirmar.':'Todos los registros locales tienen recibo.');if(S.page==='queue')render();
  }finally{S.syncing=false;}}
 async function logout(){if(S.syncing)throw new Error('V3_WAIT_FOR_SYNC');if(vault?.key){const rows=await vault.entries(),n=rows.filter(x=>x.status!=='received').length;if(n&&!confirm(`Hay ${n} pendiente(s) cifrado(s). Se conservarán para esta misma persona; la siguiente no podrá enviarlos. ¿Bloquear archivo y salir?`))return;await vault.write('pack',S.pack);vault.lock();}
- if(navigator.onLine)await api.logout();else if(!S.simulation){const sb=await api.client();await sb.auth.signOut({scope:'local'}).catch(()=>{});}S.readiness=null;S.readinessError=null;S.registry=null;S.aliases={};S.ui=W.freshUI();S.boot=null;S.session=null;S.pack=null;S.queue=[];S.unlock=false;S.error=null;close();render();}
+ if(navigator.onLine)await api.logout();else if(!S.simulation){const sb=await api.client();await sb.auth.signOut({scope:'local'}).catch(()=>{});}localStorage.removeItem('pulso-personal-current');S.simple=false;S.simpleState=null;S.readiness=null;S.readinessError=null;S.registry=null;S.aliases={};S.ui=W.freshUI();S.boot=null;S.session=null;S.pack=null;S.queue=[];S.unlock=false;S.error=null;close();render();}
 function credentials(r){if(r.credentials_unavailable){modal('Acceso creado',`<p>La cuenta existe, pero no se vuelve a mostrar la contraseña original. Use Restablecer clave tras confirmar el estado.</p><pre>${E(r.code||'')}</pre>`);return;}const c=r.credential;modal('Credenciales privadas',`<p>Cuenta creada. Entregue solamente esta credencial a su titular.</p><div class="credential">${E(c.code)}<br>${E(c.password)}</div><button class="primary wide" data-action="download-credential">Guardar credencial privada</button><p class="inline-note">No guardar en GitHub ni en una carpeta pública.</p>`);S.credential=c;}
 function updatePaperCandidates(){const el=document.querySelector('#paper-task');if(!el)return;const t=currentTask(el.value),q=S.boot.questionnaires.find(q=>q.id===t?.questionnaire_id),list=document.querySelector('#paper-candidate-list');if(list)list.innerHTML=(q?.items||[]).map(c=>`<option value="${E(c.id)}">${E(c.name)} · ${E(c.list)}</option>`).join('');}
 function stationForm(id){const s=S.boot.stations.find(s=>s.id===id);commandForm(s?'Editar local':'Añadir local','station.save',(s?hid('id',s.id):V.select('Ciudad','district_id',permittedCity()))+V.field('Código interno único','code',s?.code||'','text','required maxlength="60"')+V.field('Nombre real del local','name',s?.name||'','text','required maxlength="160"')+V.field('Dirección','address',s?.address||'','text','required minlength="5" maxlength="250"')+V.field('Código oficial (opcional)','official_code',s?.official_code||'','text','maxlength="100"'),s?.revision);}
@@ -95,9 +130,12 @@ async function click(action,id,el){
  case 'registry-export':if(S.boot.actor.role!=='admin'||!S.registry)throw new Error('V3_SCOPE_DENIED');C.download(W.registryCSV(S),'Pulso_INTERNO_filtrado.csv','text/csv;charset=utf-8');break;
  case 'record-page':S.ui.recordPage=Math.max(0,Number(id)||0);render();break;
  case 'record-detail':{const r=W.recordRows(S).find(r=>r.id===id);if(!r)throw new Error('V3_NOT_FOUND');modal('Detalle del registro',`<p>${E(r.candidate_name)} · ${E(r.candidate_list)}</p><p>Encuesta: ${C.time(r.captured_at)}<br>Recepción: ${C.time(r.received_at)}</p><p>${E(r.station_name)} · ${E(r.point_label)}</p><p>Versión ${E(r.questionnaire_version)} · ${E(C.STATE[r.disposition])}</p><details><summary>Identificadores de auditoría</summary><pre>${E(JSON.stringify(r,null,2))}</pre></details>`);break;}
+ case 'simple-generate':document.querySelector('#simple-account-form [name=password]').value=Simple.generatedPassword();break;
+ case 'simple-password-toggle':{const p=document.querySelector('#simple-account-form [name=password]');p.type=p.type==='password'?'text':'password';break;}
+ case 'simple-retry':await preparePhone(true);render();break;
  case 'logout':await logout();break;
  case 'enter-code':S.join=' ';S.error=null;render();break;
- case 'offline-open':{let hint;try{hint=JSON.parse(localStorage.getItem('pulso-v3-last')||'null');}catch{}if(!hint||hint.environment!==environment())throw new Error('V3_NO_LOCAL_ARCHIVE');S.offline=!navigator.onLine;await openVault(hint.user);break;}
+ case 'offline-open':{const h=personalHint();if(h&&h.environment===environment()){S.simple=true;S.offline=!navigator.onLine;await openVault(h.user);break;}let hint;try{hint=JSON.parse(localStorage.getItem('pulso-v3-last')||'null');}catch{}if(!hint||hint.environment!==environment())throw new Error('V3_NO_LOCAL_ARCHIVE');S.offline=!navigator.onLine;await openVault(hint.user);break;}
  case 'station-new':stationForm();break;case 'station-edit':stationForm(id);break;
  case 'point-new':pointForm();break;case 'point-edit':pointForm(id);break;
  case 'point-approve':{const p=currentPoint(id);commandForm('Aprobar lugar real','point.approve',hid('id',id)+`<p>${E(V.namePoint(S.boot,id))}</p><label class="check"><input name="verified" type="checkbox" required>Verifiqué el lugar, el permiso operativo y su pertenencia a la ciudad.</label>`+reason(),p.revision);break;}
@@ -105,7 +143,7 @@ async function click(action,id,el){
  case 'person-rename':{const p=currentPerson(id);form('Corregir nombre de la misma persona','company-edit-form',hid('id',id)+V.field('Nombre','display_name',p.display_name,'text','required maxlength="100"')+reason()+`<p>No utilice esta función para reemplazar a una persona; para un relevo, incorpore una identidad nueva.</p>`,`data-command="person.rename" data-revision="${p.revision}"`);break;}
  case 'actor-rename':{const a=currentActor(id);form('Corregir nombre de la cuenta','company-edit-form',hid('id',id)+V.field('Nombre','display_name',a.display_name,'text','required maxlength="100"')+reason(),`data-command="actor.rename" data-revision="${a.revision}"`);break;}
  case 'actor-role':{const a=currentActor(id);commandForm('Cambiar rol y revocar alcances anteriores','actor.promote',hid('id',id)+V.select('Nuevo rol','role',[{id:'viewer',name:'Viewer'},{id:'coordinator',name:'Coordinador'}],a.role)+reason()+`<p>La cuenta deberá volver a ingresar. Los permisos anteriores quedan revocados. Para otra cuenta administrativa, solicite un acceso nuevo a la administración de la plataforma.</p>`,a.revision);break;}
- case 'person-new':commandForm('Incorporar persona','person.add',V.select('Ciudad','district_id',permittedCity())+V.select('Punto de incorporación (opcional)','point_id',[{id:'',name:'Sin punto específico (requiere permiso de ciudad)'},...S.boot.points.map(p=>({id:p.id,name:V.namePoint(S.boot,p.id)}))])+V.field('Nombre / denominación reconocible','display_name','','text','required maxlength="100"'));break;
+ case 'person-new':if(S.simple&&S.boot.actor.role==='admin'){form('Crear encuestador','simple-account-form',Simple.accountFields());break;}commandForm('Incorporar persona','person.add',V.select('Ciudad','district_id',permittedCity())+V.select('Punto de incorporación (opcional)','point_id',[{id:'',name:'Sin punto específico (requiere permiso de ciudad)'},...S.boot.points.map(p=>({id:p.id,name:V.namePoint(S.boot,p.id)}))])+V.field('Nombre / denominación reconocible','display_name','','text','required maxlength="100"'));break;
  case 'person-approve':case 'person-suspend':case 'person-restore':{const p=currentPerson(id);commandForm(action==='person-approve'?'Aprobar persona':action==='person-suspend'?'Suspender persona':'Revisar y restaurar',action.replace('-','.'),hid('id',id)+`<p>${E(p.code)} · ${E(p.display_name)}</p>`+reason(),p.revision);break;}
  case 'issue':{const p=currentPerson(id);if(!confirm(`¿Generar un acceso de un solo uso para ${p.display_name}? Reemplaza cualquier invitación previa no completada.`))break;const r=await api.edge({action:'issue',person_id:id,point_id:p.recruit_point,request_id:C.uuid()});if(!r.token)throw new Error('V3_INVITE_REISSUE_REQUIRED');const link=new URL(location.pathname,location.origin);link.hash='join='+r.token;const qr=await QRCode.toDataURL(link.href,{errorCorrectionLevel:'M',margin:2,width:320});modal('Acceso de una sola persona',`<div class="qr"><h3>${E(p.code)} · ${E(p.display_name)}</h3><img src="${qr}" alt="QR de incorporación individual"><p>Vence ${C.time(r.expires_at)}. No lo publique en grupos.</p><div class="credential">${E(r.token)}</div><p class="inline-note">Escanear abre la misma dirección de esta versión. La persona debe confirmar y capacitarse.</p>${V.button('Revocar este acceso','revoke-invite',r.id,'danger')}</div>`);await refresh();break;}
  case 'revoke-invite':await api.edge({action:'revoke',id});close();await refresh(true);break;
@@ -141,7 +179,9 @@ async function click(action,id,el){
  case 'preflight':modal('Preflight de V3',`<pre>${E(JSON.stringify(await api.rpc('v3_preflight'),null,2))}</pre><p>Los pendientes en teléfonos y las pruebas físicas no se verifican por este RPC.</p>`);break;
  case 'readiness-refresh':await loadReadiness();render();break;
  case 'password':form('Cambiar mi contraseña','password-form',V.field('Nueva contraseña','password','','password','required minlength="16" autocomplete="new-password"')+V.field('Repetir','repeat','','password','required minlength="16" autocomplete="new-password"'));break;
- case 'rescue-export':if(!vault?.key)throw new Error('V3_VAULT_LOCKED');C.download(JSON.stringify(await vault.exportEncrypted()),'PULSO_COPIA_CIFRADA_'+new Date().toISOString().slice(0,10)+'.json','application/json');break;
+ case 'rescue-export':if(!vault?.key)throw new Error('V3_VAULT_LOCKED');if(S.simple){const backup=await vault.portableBackup();modal('Copia privada de emergencia',`<p>Esta clave sirve solo para recuperar la copia, no para iniciar sesión. Guárdela por separado y no la publique.</p><div class="credential">${E(backup.phrase)}</div><button data-action="simple-backup-file" class="primary">Guardar copia cifrada</button><button data-action="simple-backup-key">Guardar clave por separado</button>`);S.backup=backup;}else C.download(JSON.stringify(await vault.exportEncrypted()),'PULSO_COPIA_CIFRADA_'+new Date().toISOString().slice(0,10)+'.json','application/json');break;
+ case 'simple-backup-file':if(S.backup)C.download(JSON.stringify(S.backup.data),'PULSO_COPIA_PRIVADA.json','application/json');break;
+ case 'simple-backup-key':if(S.backup)C.download(S.backup.phrase,'PULSO_CLAVE_COPIA_PRIVADA.txt','text/plain');break;
  case 'rescue-import':form('Recuperar copia de mi propia identidad','rescue-form',V.field('Copia cifrada','file','','file','required accept=".json"')+V.field('Frase usada en la copia','phrase','','password','required minlength="12"')+'<p>No cambia el origen ni las respuestas. La misma cuenta debe volver a autenticarse.</p>');break;
  case 'attachments':{const rows=await api.rpc('v3_attachments',{p_point:id});modal('Documentos del punto',`<p>Solo permiso del local, protocolo o incidente. No fotografías, documentos ni identificadores de votantes.</p><form id="attachment-form" data-point="${E(id)}">${V.select('Tipo','purpose',[{id:'site_authorization',name:'Autorización del punto'},{id:'methodology',name:'Protocolo'},{id:'incident',name:'Incidente'}])}${V.field('PDF / PNG / JPEG hasta 10 MB','file','','file','required accept=".pdf,.png,.jpg,.jpeg"')}<button type="submit" class="primary">Adjuntar</button></form>${rows.map(r=>`<div class="listrow"><span>${E(r.file_name)}</span>${V.button('Abrir por enlace temporal','attachment-open',r.object_path,'small')}</div>`).join('')}`);break;}
  case 'attachment-open':{const url=await api.attachmentURL(id);modal('Documento privado',`<a class="button primary" href="${E(url)}" target="_blank" rel="noopener noreferrer">Abrir documento (enlace válido 60 s)</a>`);break;}
@@ -151,7 +191,7 @@ async function click(action,id,el){
 async function submit(formEl){let data=values(formEl);const request=formEl.dataset.request||(formEl.dataset.request=C.uuid());switch(formEl.getAttribute('id')){
  case 'login-form':S.loginCode=data.code;await enter(await api.login(data.code,data.password));break;
  case 'join-form':{let claim;try{claim=JSON.parse(sessionStorage.getItem('pulso-v3-claim')||'null');}catch{}if(!claim||claim.token!==data.token)claim={token:data.token,secret:C.token(),lock:C.uuid()};sessionStorage.setItem('pulso-v3-claim',JSON.stringify(claim));const session=await api.claim(claim.token,claim.secret,claim.lock);sessionStorage.removeItem('pulso-v3-claim');S.join=null;await enter(session);break;}
- case 'vault-form':{if(!S.vaultExists&&data.phrase!==data.repeat)throw new Error('V3_VAULT_WRONG_KEY');await vault.unlock(data.phrase);S.unlock=false;S.error=null;
+ case 'vault-form':{if(S.simple){await vault.migrateLegacy(data.phrase);await finishPhone();break;}if(!S.vaultExists&&data.phrase!==data.repeat)throw new Error('V3_VAULT_WRONG_KEY');await vault.unlock(data.phrase);S.unlock=false;S.error=null;
   if(!S.boot){if(navigator.onLine){const ss=await api.session();if(!ss||ss.user.id!==vault.user)throw new Error('V3_SESSION_REQUIRED');S.session=ss;S.boot=await api.rpc('v3_bootstrap',{p_client:C.CLIENT});}else{S.boot=await vault.read('bootstrap');if(!S.boot||S.boot.actor.role!=='interviewer')throw new Error('V3_NO_LOCAL_TASK');S.offline=true;}}
   if(S.boot.actor.user_id!==vault.user)throw new Error('V3_VAULT_WRONG_KEY');await vault.write('bootstrap',S.boot);S.pack=await vault.read('pack');S.queue=await vault.entries();S.page='task';render();if(navigator.onLine){await refresh();await api.connect(()=>refresh());await sync();}break;}
  case 'command-form':{if(data.point_id==='')data.point_id=null;if(data.enabled==='true'||data.enabled==='false')data.enabled=data.enabled==='true';if(formEl.dataset.command==='grant.save'){data.capabilities=data.viewer_cap?['view_results']:[...formEl.querySelectorAll('[name=cap]:checked')].map(x=>x.value);delete data.cap;delete data.viewer_cap;data.valid_until=new Date(data.valid_until).toISOString();}await api.command(formEl.dataset.command,data,expected(formEl),request);close();await refresh(true);toast('Operación confirmada.');break;}
@@ -162,8 +202,12 @@ async function submit(formEl){let data=values(formEl);const request=formEl.datas
  case 'training-form':if(data.practice!=='refused'||!data.ack)throw new Error('V3_TRAINING_RETRY');await api.rpc('v3_training',{p_answers:[data.first,data.second,data.third],p_practice_ack:true,p_client:C.CLIENT});close();await refresh(true);toast('Práctica completada. Espere aprobación del coordinador.');break;
  case 'capture-form':{if(!S.choice)throw new Error('V3_INVALID_ANSWER');if(S.boot.operation.phase!=='running')throw new Error('V3_POINT_OR_VERSION_CLOSED');let geo={...S.geo};if(geo.status==='granted'&&Date.now()-Date.parse(geo.captured_at)>900000)geo={status:'stale'};
   const e={id:C.uuid(),assignment_id:S.pack.assignment.id,grant_id:S.pack.grant.id,questionnaire_id:S.pack.questionnaire.id,point_id:S.pack.point.id,started_at:S.started,captured_at:new Date().toISOString(),candidate_id:S.choice.candidate_id,outcome:S.choice.outcome,consent:S.choice.outcome!=='refused'&&data.consent===true,already_voted:data.voted===true,geo};
-  C.validateCapture(e,S.pack);await vault.add(e);S.choice=null;S.started=new Date().toISOString();S.queue=await vault.entries();render();scrollTo(0,0);toast('Guardado cifrado. Esperando recibo del servidor.');await sync();break;}
+  C.validateCapture(e,S.pack);await vault.add(e);S.choice=null;S.started=new Date().toISOString();S.queue=await vault.entries();render();scrollTo(0,0);toast('Guardado cifrado. Esperando recibo del servidor.');await sync();if(S.simple){await preparePhone(true);render();}break;}
  case 'questionnaire-form':{data.items=[...formEl.querySelectorAll('[data-candidate]')].map(r=>({id:r.dataset.candidate,name:r.querySelector('[name=candidate_name]').value.trim(),list:r.querySelector('[name=candidate_list]').value.trim()}));delete data.candidate_name;delete data.candidate_list;await api.command('questionnaire.save',data,expected(formEl),request);close();await refresh(true);break;}
+ case 'simple-account-form':{
+ if(!S.simple||S.boot.actor.role!=='admin')throw Error('V3_ADMIN_ONLY');
+ const result=await api.edge({action:'create_interviewer',code:data.code.toUpperCase(),display_name:data.display_name,password:data.password,district_id:data.district_id,point_id:data.point_id||null,request_id:request},false,'interviewer-access');
+ formEl.querySelector('[name=password]').value='';credentials(result);await refresh();break;}
  case 'access-form':if(data.role==='admin'&&!confirm('¿Crear un administrador con acceso completo?'))break;credentials(await api.edge({action:'create_access',...data,request_id:request}));await refresh();break;
  case 'import-form':S.preview=await api.rpc('v3_import_preview',{p_kind:data.kind,p_rows:await parseFile(data.file,data.kind),p_client:C.CLIENT});render();break;
  case 'export-form':{const r=await api.command('export.create',{kind:data.kind,district_id:data.district_id||null},0,request);let all=[],offset=0;do{const p=await api.rpc('v3_export_page',{p_id:r.id,p_offset:offset,p_limit:250});if(Array.isArray(p.data))all.push(...p.data);else{all=p.data;offset=null;break;}offset=p.next_offset;}while(offset!==null);if(Array.isArray(all)){const keys=all.length?Object.keys(all[0]):['id'];C.download(C.csv([keys,...all.map(x=>keys.map(k=>typeof x[k]==='object'?JSON.stringify(x[k]):x[k]))]),'Pulso_V3_INTERNO_'+data.kind+'.csv','text/csv');}else C.download(JSON.stringify(all,null,2),'Pulso_V3_INTERNO_'+data.kind+'.json','application/json');toast('Instantánea completa descargada.');delete formEl.dataset.request;break;}
@@ -174,7 +218,7 @@ async function submit(formEl){let data=values(formEl);const request=formEl.datas
  default:throw new Error('V3_UNKNOWN_FORM');}}
 document.addEventListener('click',async event=>{const el=event.target.closest('[data-action]');if(!el)return;event.preventDefault();if(S.busy)return;S.error=null;setBusy(true);el.disabled=true;try{await click(el.dataset.action,el.dataset.id,el);}catch(e){error(e,el.closest('form'));}finally{setBusy(false);if(el.isConnected)el.disabled=false;}});
 document.addEventListener('submit',async event=>{event.preventDefault();const form=event.target;if(S.busy||!form.reportValidity())return;setBusy(true);const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{S.error=null;await submit(form);}catch(e){error(e,form);}finally{setBusy(false);buttons.filter(b=>b.isConnected).forEach(b=>b.disabled=false);}});
-document.addEventListener('change',e=>{
+document.addEventListener('change',e=>{if(e.target.id==='simple-city'){Simple.updateOptions(S.boot,'city');return;}if(e.target.id==='simple-station'){Simple.updateOptions(S.boot,'station');return;}
  const map={'workspace-station':'station','workspace-point':'point','workspace-search':'search','record-status':'recordStatus','record-from':'from','record-to':'to'};
  if(map[e.target.id]){if(S.busy)return;changeFilter(map[e.target.id],e.target.value).catch(error);return;}
 if(e.target.id==='mobile-nav'){if(S.busy){e.target.value=S.page;toast('Espere a que termine la operación antes de cambiar de pantalla.');}else navigate(e.target.value).catch(error);}if(e.target.id==='paper-task')updatePaperCandidates();if(e.target.name==='outcome'&&e.target.closest('#paper-form')){const f=e.target.form;f.elements.consent.disabled=e.target.value==='refused';if(f.elements.consent.disabled)f.elements.consent.checked=false;}});
@@ -183,7 +227,7 @@ window.addEventListener('offline',()=>{S.offline=true;if(S.boot&&!S.busy&&!S.mod
 setInterval(()=>{if(S.boot&&!S.unlock&&!S.busy){refresh();if(S.page!=='capture'||!S.choice)sync();}},20000);
 async function init(){const fragment=new URLSearchParams(location.hash.slice(1));if(fragment.has('join')){S.join=fragment.get('join');history.replaceState(null,'',location.pathname+location.search);}const legacy=await legacyPending();if(legacy.count)S.error={code:'V2_OUTBOX_PRESENT',title:'Pendientes de otra versión',message:`Hay ${legacy.count} pendiente(s) V2 en este navegador. V3 no los modifica. Coordine su preservación antes de cambiar de operativo.`};
  if(S.simulation){const {createSimulation}=await import('./simulation.mjs');api=await createSimulation();S.demoAccounts=api.accounts;}
- render();if(S.join)return;
+ render();if(S.join)return;if(!navigator.onLine){const h=personalHint();if(h&&h.environment===environment()){S.simple=true;S.offline=true;await openVault(h.user);return;}}
  try{const session=await api.session();if(session)await enter(session);}catch(e){error(e);}
  if(!S.simulation&&'serviceWorker'in navigator&&window.isSecureContext)await navigator.serviceWorker.register('./sw.js');}
 init().catch(error);
