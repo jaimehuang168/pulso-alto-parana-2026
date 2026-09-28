@@ -48,7 +48,7 @@ try:
         for width in [320,390,768,1440]:
             page.set_viewport_size({'width':width,'height':900});check(str(width)+'px identity fits',page.locator('[data-session-name]').inner_text().strip()==name and page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
         page.set_viewport_size({'width':390,'height':844});page.screenshot(path=str(OUT/'session-mobile.png'))
-        page.get_by_role('button',name='Salir',exact=True).filter(visible=True).first.click() if False else page.locator('[data-action=logout]:visible').first.click()
+        page.locator('[data-action=logout]:visible').first.click()
         page.locator('#login-form').wait_for(timeout=20000);check('Logout removes visible identity',page.locator('[data-session-identity]').count()==0)
         for route in ['v3/manual-es.html','tutoriales/manual.html']:
             check('Illustrated manual '+route,page.goto(BASE+route).status==200)
