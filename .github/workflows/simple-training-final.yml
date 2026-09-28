@@ -1,0 +1,103 @@
+name: Final personal phone training
+on:
+  push:
+    branches: [feat/simple-personal-login]
+    paths: [.github/workflows/simple-training-final.yml]
+permissions: {contents: write, actions: read}
+jobs:
+  training:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with: {persist-credentials: false}
+      - name: Read exact accepted native captures
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/36447775605 > /tmp/run.json
+          gh api repos/${{ github.repository }}/actions/artifacts/10981361746/zip > /tmp/evidence.zip
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile,json,hashlib
+          r=json.load(open('/tmp/run.json'));assert r['conclusion']=='success' and r['head_sha']=='940859a1ec8d254b8eb62c29d3aee6443237b9b4'
+          assert hashlib.sha256(Path('/tmp/evidence.zip').read_bytes()).hexdigest()=='e935545af27f95d74068c134829e9f55b878d9510a16134a485a82aa27e5616a'
+          p=Path('/tmp/screens');p.mkdir()
+          with zipfile.ZipFile('/tmp/evidence.zip') as z:
+            assert json.loads(z.read('evidence/simple-verdict.json'))['pass'] is True
+            for name in z.namelist():
+              if name.startswith('evidence/simple-browser/') and name.endswith('.png'):(p/Path(name).name).write_bytes(z.read(name))
+            name='evidence/live-native-browser/teaching-login-form.png';(p/Path(name).name).write_bytes(z.read(name))
+          PY
+      - name: Prepare verified illustrated text before narration
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          python -m pip install pillow==11.3.0 reportlab==4.4.3 pymupdf==1.26.4 edge-tts==7.2.8 playwright==1.57.0
+          python docs/simple/prepare_media.py --screens /tmp/screens
+          python docs/simple/build_guide.py --screens /tmp/screens --out /tmp/public
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('docs/training314/render_media.py').read_text().replace('GUÍA VISUAL R2','INGRESO PERSONAL').replace('Guía visual paso a paso R2','Ingreso personal paso a paso').replace("name='Pulso_313_'","name='Pulso_'").replace("+'_ES_R2'","+'_ES_Personal'")
+          Path('/tmp/render-personal.py').write_text(s)
+          PY
+      - name: New matched Spanish narration for both roles
+        run: |
+          python /tmp/render-personal.py --folder /tmp/public --out /tmp/admin --audience admin > /tmp/admin.log 2>&1 & A=$!
+          python /tmp/render-personal.py --folder /tmp/public --out /tmp/usuarios --audience usuarios > /tmp/usuarios.log 2>&1 & U=$!
+          status=0;wait "$A" || status=1;wait "$U" || status=1
+          cat /tmp/admin.log /tmp/usuarios.log
+          test "$status" = 0
+          cp /tmp/admin/* /tmp/usuarios/* /tmp/public/
+          cp docs/tutorials/site/style.css docs/tutorials/site/tutorials.js /tmp/public/
+      - name: Assemble isolated training player
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json,re
+          p=Path('/tmp/public');d=json.loads((p/'course-es.json').read_text());videos=[json.loads((p/(a+'-video.json')).read_text()) for a in ['admin','usuarios']]
+          assert sum(len(v['steps']) for v in videos)==22
+          for v in videos:
+            assert v['checks']['full_decode'] and v['voice']=='es-PY-TaniaNeural'
+            text=(p/v['transcript']).read_text()
+            for c in d['chapters']:
+              if c['audience']==v['id']:
+                for s in c['steps']:assert s['text'] in text
+          (p/'tutorials.json').write_text(json.dumps({'version':'3.1.3','edition':'personal-phone-015','videos':videos},ensure_ascii=False,indent=2))
+          (p/'videos.html').write_text('<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pulso · Ingreso personal</title><link rel="stylesheet" href="style.css"><script src="tutorials.js" defer></script></head><body><header><a class="brand" href="../v3/">pulso</a><nav><a href="index.html">Guía con imágenes</a><a href="Guia_Ingreso_Personal_ES.pdf">Manual PDF</a></nav></header><main><div class="intro"><h1>Ingrese y empiece a encuestar.</h1><p>Admin crea el código, contraseña y lugar. El encuestador usa su propio teléfono. 22 pasos con pantallas de formación y narración sintética en español de Paraguay.</p><p class="notice">Este modo sustituye el QR, la segunda contraseña local y el inicio manual en cuentas individuales nuevas. Los archivos protegidos anteriores requieren conservación una sola vez. No se cambian permisos ni apertura.</p></div><div id="videos"><p>Cargando…</p></div><footer>Datos ficticios, no producción. Pause para realizar cada paso. La prueba de navegador no certifica teléfonos físicos.</footer></main></body></html>')
+          for f in p.rglob('*'):
+            if f.is_file() and f.suffix in ['.json','.html','.txt','.js','.css','.srt','.vtt']:assert not re.search('[\u3400-\u9fff]|Super Admin|jaimehuang168@gmail.com',f.read_text()),f
+          PY
+          python -m playwright install --with-deps chromium
+          cp /tmp/public/index.html /tmp/manual-index.html
+          cp /tmp/public/videos.html /tmp/public/index.html
+          python /tmp/verify-simple-player.py /tmp/public
+          mv /tmp/manual-index.html /tmp/public/index.html
+      - name: Package after every guide and player test passes
+        run: |
+          mkdir -p /tmp/delivery
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib,json,zipfile
+          p=Path('/tmp/public');assert json.loads((p/'player-checks.json').read_text())['failed']==0
+          files={str(f.relative_to(p)):hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(p.rglob('*')) if f.is_file()};(p/'files.json').write_text(json.dumps({'edition':'personal-phone-015','files':files},indent=2))
+          out=Path('/tmp/delivery/Pulso_Ingreso_Personal_ES.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+            for f in sorted(p.rglob('*')):
+              if f.is_file():z.write(f,str(f.relative_to(p)))
+          (out.parent/'SHA256.txt').write_text(hashlib.sha256(out.read_bytes()).hexdigest())
+          print('Verified public package SHA256:',hashlib.sha256(out.read_bytes()).hexdigest())
+          PY
+      - name: Durable release and exact readback
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          tag=pulso-ingreso-personal-015
+          if ! gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$tag" /tmp/delivery/Pulso_Ingreso_Personal_ES.zip --repo "${{ github.repository }}" --target "$GITHUB_SHA" --title 'Pulso · Ingreso con teléfono personal' --notes '22 pasos ilustrados y dos videos narrados. Cuentas individuales con preparación automática. Solo capturas de formación, sin datos ni contraseñas reales. No instala el módulo del servidor ni abre encuestas.'
+          fi
+          mkdir -p /tmp/readback
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern Pulso_Ingreso_Personal_ES.zip --dir /tmp/readback
+          cmp /tmp/delivery/Pulso_Ingreso_Personal_ES.zip /tmp/readback/Pulso_Ingreso_Personal_ES.zip
+          git archive --format=zip HEAD -o /tmp/delivery/source.zip
+      - uses: actions/upload-artifact@v7.0.0
+        if: success()
+        with: {name: pulso-simple-training-release, path: /tmp/delivery/, retention-days: 14}
