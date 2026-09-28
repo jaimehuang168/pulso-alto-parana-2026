@@ -8,56 +8,7 @@ permissions:
   contents: read
   actions: read
 jobs:
-  manual:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with: {persist-credentials: false}
-      - name: Read only accepted synthetic screenshot artifacts
-        env: {GH_TOKEN: '${{ github.token }}'}
-        run: |
-          mkdir -p /tmp/screens /tmp/manual
-          gh api repos/${{ github.repository }}/actions/artifacts/10965725175/zip > /tmp/ui.zip
-          gh api repos/${{ github.repository }}/actions/artifacts/10967076503/zip > /tmp/native.zip
-          python - <<'PY'
-          from pathlib import Path,PurePosixPath
-          import zipfile,hashlib,shutil
-          for src,sha,dest in [('/tmp/ui.zip','4f01ecc6442b9392f98c5599c8e936349aa06d4ffd8980fb8393520cb3575e28','/tmp/screens'),('/tmp/native.zip','07b4f19b5a753e9586fc0d13b7cf3212cb288218a2569d2a2201cfa0f130332b','/tmp/native')]:
-            assert hashlib.sha256(Path(src).read_bytes()).hexdigest()==sha
-            with zipfile.ZipFile(src) as z:
-              for f in z.infolist():
-                p=PurePosixPath(f.filename);assert not p.is_absolute() and '..' not in p.parts
-              z.extractall(dest)
-          out=Path('/tmp/screens/native');out.mkdir()
-          mapping={'login':'teaching-login.png','login_form':'teaching-login-form.png','alias':'teaching-alias.png','policy':'teaching-policy.png','channel':'teaching-channel.png','viewer':'teaching-viewer.png','cut':'teaching-cut.png','cut-actions':'teaching-cut-actions.png','task-pending':'webkit-teaching-task-pending.png','task-confirmed':'webkit-teaching-task-confirmed.png','live':'chromium-native-four-cities.png','viewer-live':'chromium-native-four-cities.png'}
-          for name,source in mapping.items():shutil.copyfile(Path('/tmp/native/live-native-browser')/source,out/(name+'.png'))
-          PY
-      - name: Build and verify illustrated manual before narration
-        run: |
-          python -m pip install pillow==11.3.0 reportlab==4.4.3 pymupdf==1.26.4
-          python docs/training314/build_public.py --source docs/training314 --screens /tmp/screens --out /tmp/manual
-          python - <<'PY'
-          from pathlib import Path
-          import fitz,json,re,hashlib
-          out=Path('/tmp/manual');d=json.loads((out/'course-es.json').read_text());checks=[]
-          for name,audience in [('Manual_Admin_ES','admin'),('Manual_Usuarios_ES','usuarios'),('Manual_Completo_ES',None)]:
-            pdf=fitz.open(out/(name+'.pdf'));text=' '.join(p.get_text() for p in pdf);compact=re.sub(r'\s+',' ',text)
-            for c in d['chapters']:
-              if audience and c['audience']!=audience:continue
-              for s in c['steps']:
-                assert s['id']+' ·' in compact,(name,s['id'])
-                assert re.sub(r'\s+',' ',s['text']) in compact,(name,s['id'],'text')
-            assert all(p.get_images() or len(p.get_text().strip())>30 for p in pdf)
-            checks.append({'file':name+'.pdf','pages':len(pdf),'all_steps_present':True})
-          assert len(list((out/'images').glob('*.jpg')))==147
-          for p in [out/'manual.html',out/'course-es.json']:assert not re.search('[\u3400-\u9fff]|jaimehuang168@gmail.com|Super Admin',p.read_text())
-          (out/'document-checks.json').write_text(json.dumps({'pass':True,'chapters':26,'illustrated_steps':147,'checks':checks},indent=2))
-          PY
-      - uses: actions/upload-artifact@v7.0.0
-        with: {name: pulso-illustrated-manual-r2, path: /tmp/manual/, retention-days: 30}
   video:
-    needs: manual
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -67,11 +18,25 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with: {persist-credentials: false}
       - uses: actions/download-artifact@v8.0.1
-        with: {name: pulso-illustrated-manual-r2, path: /tmp/manual}
-      - name: Render matched steps with new neural Spanish voice
+        with:
+          name: pulso-illustrated-manual-r2
+          path: /tmp/manual
+          run-id: 36416908813
+          github-token: '${{ github.token }}'
+      - name: Verify accepted manual and install media tools
         run: |
+          python - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('/tmp/manual');c=json.loads((p/'document-checks.json').read_text());assert c['pass'] and c['illustrated_steps']==147
+          d=json.loads((p/'course-es.json').read_text());assert len(d['chapters'])==26 and d['step_count']==147
+          PY
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          ffmpeg -version
+          ffprobe -version
           python -m pip install pillow==11.3.0 edge-tts==7.2.8
-          python docs/training314/render_media.py --folder /tmp/manual --out /tmp/video --audience ${{ matrix.audience }}
+      - name: Render matched steps with new neural Spanish voice
+        run: python docs/training314/render_media.py --folder /tmp/manual --out /tmp/video --audience ${{ matrix.audience }}
       - name: Confirm voice is audible and subtitles cover each step
         run: |
           python - <<'PY'
