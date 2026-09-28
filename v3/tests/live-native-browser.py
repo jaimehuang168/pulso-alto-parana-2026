@@ -21,13 +21,17 @@ def cmd(action,data,rev=0):return rpc('v3_command',{'p_action':action,'p_data':d
 def enable_all():
  for c in ['cde','minga','hernandarias','franco']:rpc('v3_live_authorize',{'p_district':c,'p_enabled':True,'p_expires':(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(minutes=25)).isoformat(),'p_reference':'ISOLATED NATIVE BROWSER FIXTURE','p_confirmed':True})
 def login(page,credentials):
- form=page.locator('#login-form');form.wait_for(state='visible',timeout=20000);form.locator('[name=code]').fill(credentials['code']);form.locator('[name=password]').fill(credentials['password']);form.locator('button[type=submit]').click()
+ form=page.locator('#login-form');form.wait_for(state='visible',timeout=20000)
+ if '/v3/' in page.url:
+  page.screenshot(path=str(OUT/'teaching-login.png'));form.screenshot(path=str(OUT/'teaching-login-form.png'))
+ form.locator('[name=code]').fill(credentials['code']);form.locator('[name=password]').fill(credentials['password']);form.locator('button[type=submit]').click()
 def ready(page):page.locator('.candidate-line').first.wait_for(timeout=20000)
 def field_done(page):page.wait_for_function("document.querySelector('#app')?.getAttribute('aria-busy')!=='true'",timeout=25000)
 def busy_done(page):
- # Report-row actions are not forms; the console locks all buttons for both paths.
  page.wait_for_function("document.querySelector('#reload')?.disabled !== true && !document.querySelector('form[aria-busy=true]')",timeout=25000)
-def submit(page,form):page.locator(form+' button').click();busy_done(page);page.locator('#message.success').wait_for(timeout=20000)
+def submit(page,form):
+ page.locator(form).screenshot(path=str(OUT/('teaching-'+form.lstrip('#')+'.png')))
+ page.locator(form+' button').click();busy_done(page);page.locator('#message.success').wait_for(timeout=20000)
 def snapshot(page,name):page.screenshot(path=str(OUT/name),full_page=True)
 def int_text(locator):return int(''.join(c for c in locator.inner_text() if c.isdigit()))
 def safe_error(e):
@@ -45,12 +49,11 @@ with sync_playwright() as pw:
    mobile=browser.new_context(**pw.devices['iPhone 13' if engine=='webkit' else 'Pixel 5'],locale='es-PY',timezone_id='America/Asuncion');w=mobile.new_page();w.goto(BASE+'/v3/');login(w,f['worker'])
    w.locator('#vault-form').wait_for(timeout=20000);w.locator('#vault-form [name=phrase]').fill('Synthetic mobile acceptance vault 2026')
    if w.locator('#vault-form [name=repeat]').count():w.locator('#vault-form [name=repeat]').fill('Synthetic mobile acceptance vault 2026')
-   w.locator('#vault-form button').click();ack=w.locator('[data-action=task-ack][data-id="'+task+'"]');ack.wait_for(timeout=20000);ack.click();field_done(w);start=w.locator('[data-action=task-start][data-id="'+task+'"]');start.wait_for(timeout=20000);start.click();w.locator('#capture-form').wait_for(timeout=20000)
+   w.locator('#vault-form button').click();ack=w.locator('[data-action=task-ack][data-id="'+task+'"]');ack.wait_for(timeout=20000);snapshot(w,engine+'-teaching-task-pending.png');ack.click();field_done(w);start=w.locator('[data-action=task-start][data-id="'+task+'"]');start.wait_for(timeout=20000);snapshot(w,engine+'-teaching-task-confirmed.png');start.click();w.locator('#capture-form').wait_for(timeout=20000)
    check(engine+' actual field App displays only assigned CDE candidates',w.locator('.choice[data-outcome=candidate]').count()==2)
    w.locator('[name=voted]').check();w.locator('[name=consent]').check();w.locator('.choice[data-outcome=candidate]').first.click();w.locator('#capture-form button[type=submit]').click();field_done(w);w.locator('[data-action=nav][data-id=queue]:visible').first.click();w.get_by_text('Aceptada',exact=True).wait_for(timeout=20000)
    a.wait_for_function("old=>Number(document.querySelector('[data-city=cde] .metrics .metric b').textContent.replace(/[^0-9]/g,''))>old",arg=before,timeout=15000)
    check(engine+' real App HTTP submission updates another logged-in monitor without reload',int_text(a.locator('[data-city=cde] .metrics .metric b').first)==before+1)
-   # A second device must not silently take over the previous active session.
    field_done(w);w.locator('[data-action=nav][data-id=capture]:visible').first.click();field_done(w);w.locator('[data-action=nav][data-id=task]:visible').first.click();w.on('dialog',lambda d:d.accept());finish=w.locator('[data-action=finish-my-task][data-id="'+task+'"]');finish.wait_for(timeout=20000);finish.click();field_done(w)
    tasks=rpc('v3_bootstrap')['assignments'];check(engine+' worker finishes the current task through the App before device handover',next(t for t in tasks if t['id']==task)['status']=='draining')
    a.locator('#audience').select_option('codes');a.wait_for_function("!document.querySelector('#board').textContent.includes('Candidatura') && document.querySelector('.candidate-name')?.textContent.trim()==='CDE-A'");check(engine+' codes-only switch removes all real names from displayed DOM','Lista DEMO' not in a.locator('#board').inner_text())
@@ -59,13 +62,13 @@ with sync_playwright() as pw:
    a.set_viewport_size({'width':1920,'height':1080});snapshot(a,engine+'-native-four-cities.png');check(engine+' four panels fit 1080p without clipping candidates',a.evaluate("document.documentElement.scrollHeight<=innerHeight+1 && [...document.querySelectorAll('.candidate-list')].every(e=>e.scrollHeight<=e.clientHeight+1)"))
    a.locator('button[data-city=minga]').click();check(engine+' native single-city view has exactly its four candidates',a.locator('.city-card').count()==1 and a.locator('.candidate-line').count()==4);a.set_viewport_size({'width':390,'height':844});snapshot(a,engine+'-native-single-mobile.png')
    a.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}));window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));");ready(a);a.wait_for_timeout(5600);check(engine+' restored back-forward page resumes live polling','ACTUALIZACIÓN ACTIVA' in a.locator('#connection').inner_text())
-   a.locator('#admin-console').click();a.locator('#workspace:not([hidden])').wait_for(timeout=20000);check(engine+' shared native administrator session opens private controls without another password','Candidatura DEMO' in a.locator('#mapping').inner_text())
+   a.locator('#admin-console').click();a.locator('#workspace:not([hidden])').wait_for(timeout=20000);check(engine+' shared native administrator session opens private controls without another password','Candidatura DEMO' in a.locator('#mapping').inner_text());snapshot(a,engine+'-teaching-console.png');a.locator('#viewer').screenshot(path=str(OUT/'teaching-viewer.png'))
    check(engine+' mobile administrator buttons remain legible rather than single-letter columns',a.locator('#reload').bounding_box()['width']>=140 and a.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
    a.locator('#alias [name=confirmed]').check();submit(a,'#alias');check(engine+' actual alias confirmation writes and reads revised private mapping','Confirmados' in a.locator('#mapping').inner_text())
    a.locator('#policy [name=enabled]').check();a.locator('#policy [name=reference]').fill('ISOLATED BROWSER POLICY NOT PRODUCTION');submit(a,'#policy')
    a.locator('#channel [name=enabled]').check();a.locator('#channel [name=expires]').fill((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(minutes=25)).isoformat());a.locator('#channel [name=reference]').fill('ISOLATED BROWSER LIVE AUTHORIZATION');a.locator('#channel [name=confirmed]').check();submit(a,'#channel');enable_all()
    check(engine+' administrator configures policy and continuous city channel through actual forms','Permiso registrado' in a.locator('#release-state').inner_text())
-   submit(a,'#cut');first=a.locator('.cut-row').first;report_id=first.get_attribute('data-cut');inside=rpc('v3_report_read',{'p_id':report_id,'p_audience':'internal'});outside=rpc('v3_report_read',{'p_id':report_id,'p_audience':'external'});check(engine+' actual console creates matched frozen internal/external snapshot',inside['stats']['candidate_base']==outside['candidate_base'])
+   submit(a,'#cut');first=a.locator('.cut-row').first;report_id=first.get_attribute('data-cut');inside=rpc('v3_report_read',{'p_id':report_id,'p_audience':'internal'});outside=rpc('v3_report_read',{'p_id':report_id,'p_audience':'external'});check(engine+' actual console creates matched frozen internal/external snapshot',inside['stats']['candidate_base']==outside['candidate_base']);first.screenshot(path=str(OUT/'teaching-cut-actions.png'))
    for action,extension in [('internal-csv','csv'),('external-csv','csv'),('external-html','html'),('external-png','png')]:
     with a.expect_download(timeout=30000) as output:first.locator('[data-download='+action+']').click()
     path=OUT/(engine+'-'+action+'.'+extension);output.value.save_as(str(path));busy_done(a)

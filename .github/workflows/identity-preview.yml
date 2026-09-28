@@ -1,0 +1,56 @@
+name: Identity preview and Spanish voice
+on:
+  push:
+    branches: [ux/identity-illustrated-training]
+    paths: [.github/workflows/identity-preview.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Verify source and create isolated clients
+        run: |
+          npm --prefix v3 ci
+          mkdir -p /tmp/pulso-identity-preview
+          node --test tests/*.cjs > /tmp/pulso-identity-preview/legacy-tests.txt
+          node --test v3/tests/*.test.mjs > /tmp/pulso-identity-preview/unit-tests.txt
+          node v3/scripts/check.mjs
+          node v3/scripts/fetch-vendor.mjs
+          node v3/scripts/build.mjs --demo
+          node v3/scripts/build.mjs
+          tar -C v3/preview -czf /tmp/pulso-identity-preview/demo.tar.gz .
+          tar -C v3/dist -czf /tmp/pulso-identity-preview/login.tar.gz .
+          git rev-parse HEAD > /tmp/pulso-identity-preview/SOURCE_SHA.txt
+      - name: Test brighter Spanish narration without a paid account
+        run: |
+          python -m pip install edge-tts==7.2.8
+          python - <<'PY'
+          import asyncio,json,pathlib
+          import edge_tts
+          out=pathlib.Path('/tmp/pulso-identity-preview');result=[]
+          async def main():
+            for voice in ['es-PY-TaniaNeural','es-MX-DaliaNeural']:
+              try:
+                speech=edge_tts.Communicate('¡Vamos a comenzar! Primero, revise su nombre en la parte superior. Después, pulse Administración. Complete los datos de su empresa y guarde los cambios. ¡Listo! Compruebe el resultado antes de seguir.',voice,rate='+4%',pitch='+3Hz')
+                await asyncio.wait_for(speech.save(str(out/(voice+'.mp3'))),50)
+                result.append({'voice':voice,'pass':True})
+              except Exception as e:result.append({'voice':voice,'pass':False,'error':str(e)[:250]})
+            (out/'voice-probe.json').write_text(json.dumps(result,indent=2))
+          asyncio.run(main())
+          PY
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-identity-preview
+          path: /tmp/pulso-identity-preview/
+          retention-days: 14

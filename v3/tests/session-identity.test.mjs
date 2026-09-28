@@ -1,0 +1,11 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {identityData,sessionIdentity} from '../web/modules/session-identity.mjs';
+const actor={user_id:'synthetic-only',display_name:'María López',code:'ADMIN-DEMO',role:'admin'};
+test('current profile name and code shown, no fixed owner identity',()=>{const h=sessionIdentity(actor);assert(h.includes('María López'));assert(h.includes('ADMIN-DEMO'));assert(!h.includes('Super Admin'));assert(!h.includes('jaimehuang168'));});
+test('privileged and ordinary identities use the same neutral presentation',()=>assert.equal(sessionIdentity(actor),sessionIdentity({...actor,is_super_admin:true})));
+test('missing and unauthenticated identity render nothing',()=>{for(const a of [null,undefined,{},'text'])assert.equal(sessionIdentity(a),'');});
+test('fallback uses this account code, not another user',()=>assert.deepEqual(identityData({...actor,display_name:' '}),{name:'ADMIN-DEMO',code:'ADMIN-DEMO'}));
+test('profile text cannot inject HTML',()=>{const h=sessionIdentity({...actor,display_name:'<img src=x onerror=alert(1)>',code:'A&"'});assert(!h.includes('<img'));assert(h.includes('&lt;img'));assert(h.includes('&amp;&quot;'));});
+test('offline identity does not claim live server login',()=>{const h=sessionIdentity(actor,true);assert(h.includes('Cuenta local · sin conexión'));assert(!h.includes('Sesión iniciada'));});
+test('successive render uses only new actor',()=>{const h=sessionIdentity({...actor,display_name:'José Núñez',code:'CDE-DEMO'});assert(h.includes('José Núñez'));assert(!h.includes('María'));assert(!h.includes('ADMIN-DEMO'));});
+test('controls cleaned and accented name preserved',()=>assert.equal(identityData({...actor,display_name:'  José\nNúñez  '}).name,'José Núñez'));
