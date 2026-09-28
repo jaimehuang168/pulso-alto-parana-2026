@@ -1,0 +1,140 @@
+name: Read-only production 015 verification
+on:
+  push:
+    branches: ['qa/015-production-readonly-20260928']
+    paths: ['.github/workflows/qa-015-production-readonly.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Install browser test tooling
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.57.0
+          python -m playwright install --with-deps chromium
+      - name: Read published assets and probe unsigned backend boundaries only
+        env:
+          EXPECTED_SOURCE: 85c45327e3aa34766eacbf7c06095389d5c62d03
+          EXPECTED_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+        run: |
+          mkdir -p evidence
+          cat > /tmp/check.py <<'PY'
+          from pathlib import Path
+          from datetime import datetime,timezone
+          from urllib.parse import urlparse
+          import urllib.request,urllib.error,json,re,hashlib,base64,os,time
+          from playwright.sync_api import sync_playwright
+          BASE='https://jaimehuang168.github.io/pulso-alto-parana-2026/'
+          ORIGIN='https://jaimehuang168.github.io'
+          OUT=Path('evidence');checks=[];observations=[];started=datetime.now(timezone.utc).isoformat()
+          def check(name,ok,detail=None):
+              row={'id':name,'status':'pass' if ok else 'fail'}
+              if detail is not None:row['detail']=detail
+              checks.append(row)
+          def request(url,method='GET',headers=None,body=None):
+              t=time.monotonic();req=urllib.request.Request(url,method=method,headers=headers or {},data=body)
+              try:
+                  with urllib.request.urlopen(req,timeout=25) as r:
+                      status=r.status;h={k.lower():v for k,v in r.headers.items()};data=r.read(8_000_001)
+              except urllib.error.HTTPError as r:
+                  status=r.code;h={k.lower():v for k,v in r.headers.items()};data=r.read(65536)
+              return status,h,data,round((time.monotonic()-t)*1000)
+          def safe_code(data):
+              try:
+                  d=json.loads(data);x=d.get('error',d.get('code',''))
+                  return x if isinstance(x,str) and re.fullmatch('[A-Z0-9_]{1,90}',x) else 'UNRECOGNIZED_RESPONSE'
+              except Exception:return 'NON_JSON_RESPONSE'
+          def probe(name,url,method,headers,expected_status,expected_code=None,body=None,allow_origin=None):
+              try:
+                  status,h,b,ms=request(url,method,headers,body)
+                  code=safe_code(b) if b else None
+                  detail={'http_status':status,'error_code':code,'duration_ms':ms,'allow_origin':h.get('access-control-allow-origin'),'cache_control':h.get('cache-control')}
+                  ok=status==expected_status and (expected_code is None or code==expected_code)
+                  if allow_origin is not None:ok=ok and h.get('access-control-allow-origin')==allow_origin
+                  if name.endswith('foreign_origin'):ok=ok and 'access-control-allow-origin' not in h
+                  if name.endswith('preflight'):
+                      allowed={x.strip().lower() for x in h.get('access-control-allow-headers','').split(',')}
+                      ok=ok and {'authorization','apikey','content-type','x-client-info'}.issubset(allowed) and 'POST' in h.get('access-control-allow-methods','')
+                  check(name,ok,detail)
+              except Exception as e:check(name,False,{'transport_error':type(e).__name__})
+          release=None;sb=None;key=None
+          try:
+              status,h,b,ms=request(BASE+'company-release.json?verification='+str(time.time()))
+              release=json.loads(b) if status==200 else None
+              check('published.release_current',bool(release and release.get('source_commit')==os.environ['EXPECTED_SOURCE'] and release.get('edition')=='personal-phone-015'),{'http_status':status,'source_commit':release.get('source_commit') if release else None,'edition':release.get('edition') if release else None})
+              if release:
+                  for f in ['v3/app.js','v3/workspace.css','v3/manual-simple.html']:
+                      status,h,b,ms=request(BASE+f+'?verification='+release['source_commit'])
+                      check('published.hash.'+f,status==200 and hashlib.sha256(b).hexdigest()==release.get('files',{}).get(f))
+              status,h,b,ms=request(BASE+'v3/config.js?verification='+str(time.time()))
+              text=b.decode();match=re.fullmatch(r'\s*window\.PULSO_V3_CONFIG\s*=\s*(\{.*\})\s*;?\s*',text,re.S)
+              assert status==200 and match,'Configuration cannot be read'
+              cfg=json.loads(match[1]);sb=str(cfg.get('supabaseUrl','')).rstrip('/');key=cfg.get('publishableKey','')
+              valid_key=False
+              if key.startswith('sb_publishable_'):valid_key=True
+              elif len(key.split('.'))==3:
+                  payload=key.split('.')[1];claims=json.loads(base64.urlsafe_b64decode(payload+'='*(-len(payload)%4)))
+                  valid_key=claims.get('role')=='anon'
+              check('public_config.no_privileged_key',valid_key and not key.startswith('sb_secret_'))
+              check('public_config.demo_disabled',cfg.get('simulation') is not True)
+              expected=os.environ.get('EXPECTED_SUPABASE_URL','').rstrip('/')
+              check('public_config.expected_project',bool(expected) and sb==expected,{'project_url':sb if re.fullmatch(r'https://[a-z0-9]+\.supabase\.co',sb) else 'INVALID'})
+              assert re.fullmatch(r'https://[a-z0-9]+\.supabase\.co',sb) and valid_key,'Unsafe target'
+              head={'Origin':ORIGIN,'apikey':key,'Content-Type':'application/json'}
+              for fn in ['interviewer-access','field-enrollment']:
+                  url=sb+'/functions/v1/'+fn
+                  pre={'Origin':ORIGIN,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,apikey,content-type,x-client-info'}
+                  probe('edge.'+fn+'.preflight',url,'OPTIONS',pre,204,allow_origin=ORIGIN)
+                  # No Authorization and no usable payload: both reviewed handlers reject before any DB write.
+                  probe('edge.'+fn+'.unsigned_denied',url,'POST',head,401,'V3_SESSION_REQUIRED',b'{}',ORIGIN)
+              probe('edge.interviewer-access.foreign_origin',sb+'/functions/v1/interviewer-access','OPTIONS',{'Origin':'https://verification.invalid','Access-Control-Request-Method':'POST'},403,'V3_ORIGIN_DENIED')
+              # A deliberately invalid token is NOT a user login, not a password attempt, and cannot create a user.
+              invalid={**head,'Authorization':'Bearer pulso-readonly-invalid-not-a-session'}
+              probe('edge.interviewer-access.invalid_session_denied',sb+'/functions/v1/interviewer-access','POST',invalid,401,'V3_SESSION_REQUIRED',b'{}',ORIGIN)
+              # Stable, read-only RPC; never call the task/preparation or account creation APIs.
+              anon_headers={**head}
+              if key.startswith('eyJ'):anon_headers['Authorization']='Bearer '+key
+              probe('rpc.installation_status.anonymous_denied',sb+'/rest/v1/rpc/v3_installation_status','POST',anon_headers,401,'42501',b'{}')
+              with sync_playwright() as p:
+                  browser=p.chromium.launch();context=browser.new_context(viewport={'width':390,'height':844});page=context.new_page();page_errors=[]
+                  page.on('pageerror',lambda e:page_errors.append(type(e).__name__))
+                  # Restrict browser-side backend methods to GET/OPTIONS; this browser has no user session.
+                  def route_backend(route):
+                      if route.request.method not in ['GET','OPTIONS']:route.abort()
+                      else:route.continue_()
+                  context.route(sb+'/**',route_backend)
+                  response=page.goto(BASE+'v3/',wait_until='domcontentloaded',timeout=60000)
+                  page.locator('#login-form').wait_for(timeout=30000)
+                  check('browser.real_login_page',response.status==200 and page.locator('#login-form [name=code]').count()==1 and page.locator('#login-form [name=password]').count()==1)
+                  check('browser.logged_out_no_identity',page.locator('[data-session-identity]').count()==0)
+                  check('browser.no_demo_switch',page.locator('[data-action=demo-account]').count()==0)
+                  check('browser.spanish_login',not re.search('[\u3400-\u9fff]',page.locator('body').inner_text()))
+                  for width in [320,390,768,1440]:
+                      page.set_viewport_size({'width':width,'height':900});check('browser.login_width_'+str(width),page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                  page.set_viewport_size({'width':390,'height':844});page.screenshot(path=str(OUT/'login-mobile.png'))
+                  page.goto(BASE+'v3/manual-simple.html',wait_until='domcontentloaded',timeout=45000)
+                  check('browser.new_guide_22_steps',page.locator('article.step').count()==22)
+                  page.locator('img').evaluate_all('(xs)=>xs.forEach(x=>x.loading="eager")');page.wait_for_function('[...document.images].every(x=>x.complete&&x.naturalWidth>0)',timeout=60000)
+                  check('browser.new_guide_images',True)
+                  check('browser.no_javascript_errors',not page_errors)
+                  browser.close()
+          except Exception as e:
+              check('verification_execution',False,{'error_type':type(e).__name__,'message':str(e)[:180] if isinstance(e,AssertionError) else 'See sanitized transport or browser result'})
+          finally:
+              result={'schema':'pulso-hosted-readonly-015-1','started_at_utc':started,'finished_at_utc':datetime.now(timezone.utc).isoformat(),'source_commit':os.environ['EXPECTED_SOURCE'],'scope':'Actual hosted frontend and unsigned production Edge/readonly RPC requests; no authenticated session available. No accounts, surveys, state changes, SQL, DNS or billing operations. Ordinary request/access logs may be generated.','passed':sum(c['status']=='pass' for c in checks),'failed':sum(c['status']=='fail' for c in checks),'checks':checks,'not_verified':['Authenticated company Admin account creation','Real interviewer password login','Authenticated 015 role and task readback','Physical phone offline send-and-receipt'],'production_accounts_created':0,'production_survey_writes_attempted':0,'production_task_mutations_attempted':0,'authenticated_e2e_verified':False,'overall_assessment':'UNAUTHENTICATED_BOUNDARIES_PASS_AUTHENTICATED_FLOW_NOT_VERIFIED' if all(c['status']=='pass' for c in checks) else 'REVIEW_REPORTED_FAILURES'}
+              (OUT/'production-015-readonly.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+              print(json.dumps(result,ensure_ascii=False,indent=2))
+              summary=['# 015 production endpoint check',f"Passed: {result['passed']}; failed: {result['failed']}",'No authenticated creation or interviewer login was performed.','No accounts, surveys, SQL, DNS or settings were written.']
+              with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:f.write('\n'.join(summary)+'\n')
+          raise SystemExit(1 if any(c['status']=='fail' for c in checks) else 0)
+          PY
+          python /tmp/check.py
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: pulso-015-production-readonly
+          path: evidence/
+          retention-days: 14
